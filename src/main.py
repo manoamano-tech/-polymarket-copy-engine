@@ -7,10 +7,10 @@ from .settlement import SettlementScanner
 
 def main():
     leaders=load_leaders(); mode=setting("MODE","PAPER").upper()
-    if mode!="PAPER": raise RuntimeError("v0.6.1 refuses to run outside PAPER mode")
+    if mode!="PAPER": raise RuntimeError("v0.6.2 refuses to run outside PAPER mode")
     poll=float(setting("POLL_SECONDS","2")); base=float(setting("BASE_TRADE_USD","50")); window=float(setting("BUILD_WINDOW_SECONDS","30")); session_gap=float(setting("SESSION_GAP_SECONDS","300")); settlement_interval=float(setting("SETTLEMENT_CHECK_SECONDS","300"))
     client=PolymarketPublicClient(); store=Store("data/paper.db"); watcher=WalletWatcher(client,store,leaders,base,window,session_gap); scanner=SettlementScanner(client,store,settlement_interval)
-    print("Polymarket Copy Engine v0.6.1 | PAPER | leaders={} | build_window={}s | session_gap={}s | settlement_check={}s | strategies=24".format(len(leaders),window,session_gap,settlement_interval),flush=True)
+    print("Polymarket Copy Engine v0.6.2 | PAPER | leaders={} | build_window={}s | session_gap={}s | settlement_check={}s | strategies=24".format(len(leaders),window,session_gap,settlement_interval),flush=True)
     marked=watcher.bootstrap(); print("Bootstrap complete: {} existing activity rows ignored.".format(marked),flush=True)
     stats=store.summary(); print("DB stats: fills={} builds={} sessions={} paper_trades={} settled={} api_latency avg={:.1f}s min={:.1f}s max={:.1f}s".format(stats["fills"],stats["builds"],stats["sessions"],stats["paper_trades"],stats["settled"],stats["avg_latency"],stats["min_latency"],stats["max_latency"]),flush=True)
     while True:
