@@ -1,0 +1,26 @@
+leaders:
+  - name: Kch-Temp
+    wallet: "0x924379a79c64b77ad5816ad362122a5f6228658e"
+    min_trade_usd: 2000
+    max_slippage: 0.02
+  - name: Jsram
+    wallet: "0x83720820a8aa6c3f20ad71850e7a1a17d16c5223"
+    min_trade_usd: 2000
+    max_slippage: 0.02
+  - name: xifutloong3
+    wallet: "0x2dc13c6bda81b202281e796953a7323de675b33c"
+    min_trade_usd: 2000
+    max_slippage: 0.02
+  - name: Wiretransferxyz
+    wallet: "0x30c7ac0158499ddc6761047f7f69bcf7d036ac3b"
+    min_trade_usd: 2000
+    max_slippage: 0.01
+    category: CS2
+  - name: RN1
+    wallet: "0x2005d16a84ceefa912d4e380cd32e7ff827875ea"
+    min_trade_usd: 10000
+    max_slippage: 0.01
+  - name: beachboy4
+    wallet: "0xc2e7800b5af46e6093872b177b7a5e7f0563be51"
+    min_trade_usd: 2000
+    max_slippage: 0.02
