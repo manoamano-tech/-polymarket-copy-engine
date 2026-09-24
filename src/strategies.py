@@ -24,6 +24,8 @@ def evaluate_matrix(build_usd,slippage,base_trade=50):
                 results.append(StrategyResult(name,minimum,limit,"SKIP","empty_order_book",0.0))
             elif slippage > limit:
                 results.append(StrategyResult(name,minimum,limit,"SKIP","price_moved",0.0))
+            elif slippage < 0:
+                results.append(StrategyResult(name,minimum,limit,"COPY","price_improved",float(base_trade)))
             else:
                 results.append(StrategyResult(name,minimum,limit,"COPY","paper_fill",float(base_trade)))
     return results
