@@ -13,6 +13,15 @@ class WalletWatcher:
         self.client,self.store,self.leaders=client,store,leaders
         self.base_trade=base_trade
         self.aggregator=FillAggregator()
+    def bootstrap(self):
+        marked=0
+        for leader in self.leaders:
+            for row in self.client.activity(leader.wallet,100):
+                fp=fingerprint(row)
+                if not self.store.seen(fp):
+                    self.store.mark_seen(fp,int(row.get("timestamp") or time.time()))
+                    marked+=1
+        return marked
     def poll_once(self):
         handled=0
         for leader in self.leaders:
