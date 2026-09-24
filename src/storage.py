@@ -25,7 +25,7 @@ class Store:
     def insert(self,table,row):
         cols=",".join(row.keys()); qs=",".join(["?"]*len(row)); cur=self.db.execute("INSERT INTO "+table+" ("+cols+") VALUES ("+qs+")",tuple(row.values())); self.db.commit(); return cur.lastrowid
     def paper_trades_for_token(self,token_id): return self.db.execute("SELECT id,side,entry_price,stake_usd,shares FROM paper_trades WHERE token_id=?",(token_id,)).fetchall()
-    def unsettled_markets(self): return self.db.execute("SELECT DISTINCT pt.market,pt.token_id FROM paper_trades pt LEFT JOIN settlements s ON s.trade_id=pt.id WHERE s.trade_id IS NULL").fetchall()
+    def unsettled_markets(self): return self.db.execute("SELECT pt.market,pt.token_id,MAX(COALESCE(pt.event,'')) FROM paper_trades pt LEFT JOIN settlements s ON s.trade_id=pt.id WHERE s.trade_id IS NULL GROUP BY pt.market,pt.token_id").fetchall()
     def unsettled_trades_for_token(self,token_id): return self.db.execute("SELECT pt.id,pt.side,pt.entry_price,pt.stake_usd,pt.shares FROM paper_trades pt LEFT JOIN settlements s ON s.trade_id=pt.id WHERE pt.token_id=? AND s.trade_id IS NULL",(token_id,)).fetchall()
     def settle_trade_verified(self,trade_id,ts,price,value,pnl,pct,condition_id,token_id,token_outcome,winning_outcome,question):
         self.db.execute("INSERT OR IGNORE INTO settlements(trade_id,settled_at,settlement_price,value_usd,realized_pnl_usd,realized_pnl_pct) VALUES(?,?,?,?,?,?)",(trade_id,ts,price,value,pnl,pct)); self.db.execute("INSERT OR REPLACE INTO settlement_audit(trade_id,condition_id,token_id,token_outcome,winning_outcome,question,verified_at,settlement_price) VALUES(?,?,?,?,?,?,?,?)",(trade_id,condition_id,token_id,token_outcome,winning_outcome,question,ts,price)); self.db.commit()
