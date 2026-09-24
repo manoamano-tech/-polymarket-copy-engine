@@ -12,6 +12,8 @@ class LeaderFill:
     price: float
     size_usd: float
     observed_at: datetime
+    token_id: str = ""
+    transaction_hash: str = ""
 
 @dataclass(slots=True)
 class Signal:
