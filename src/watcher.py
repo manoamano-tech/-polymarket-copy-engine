@@ -42,15 +42,24 @@ class WalletWatcher:
             fill=build.fills[-1]; current=self.client.executable_price(fill.token_id,fill.side); slip=None if current is None else (current-build.vwap if fill.side=="BUY" else build.vwap-current)
             latencies=[max(0,build.last_seen-f.observed_at.timestamp()) for f in build.fills]; duration=max(0,(build.fills[-1].observed_at-build.fills[0].observed_at).total_seconds())
             build_id=self.store.insert("paper_builds",{"decided_at":now,"leader":fill.leader,"wallet":fill.wallet,"market":fill.market,"event":fill.event,"outcome":fill.outcome,"side":fill.side,"token_id":fill.token_id,"fill_count":len(build.fills),"build_usdc":build.total_usd,"leader_vwap":build.vwap,"build_duration_seconds":duration,"avg_latency_seconds":sum(latencies)/len(latencies),"current_price":current,"slippage":slip,"action":"OBSERVE","reason":"strategy_matrix","simulated_size":0.0})
-            results=evaluate_matrix(build.total_usd,slip,self.base_trade)
-            for r in results: self.store.insert("strategy_decisions",{"build_id":build_id,"strategy":r.strategy,"min_build_usd":r.min_build_usd,"max_slippage":r.max_slippage,"action":r.action,"reason":r.reason,"simulated_size":r.simulated_size})
-            print("[BUILD] {} {} {} fills={} total=${:.2f} VWAP={:.4f} current={} slip={} strategies_copy={}/24".format(fill.leader,fill.side,fill.outcome,len(build.fills),build.total_usd,build.vwap,current,None if slip is None else round(slip,4),sum(r.action=="COPY" for r in results)),flush=True)
+            results=evaluate_matrix(build.total_usd,slip,self.base_trade); copied=0
+            for r in results:
+                self.store.insert("strategy_decisions",{"build_id":build_id,"strategy":r.strategy,"min_build_usd":r.min_build_usd,"max_slippage":r.max_slippage,"action":r.action,"reason":r.reason,"simulated_size":r.simulated_size})
+                if r.action=="COPY" and current is not None and current>0:
+                    shares=r.simulated_size/current
+                    self.store.insert("paper_trades",{"opened_at":now,"build_id":build_id,"strategy":r.strategy,"leader":fill.leader,"wallet":fill.wallet,"market":fill.market,"event":fill.event,"outcome":fill.outcome,"side":fill.side,"token_id":fill.token_id,"entry_price":current,"stake_usd":r.simulated_size,"shares":shares}); copied+=1
+            print("[BUILD] {} {} {} fills={} total=${:.2f} VWAP={:.4f} current={} slip={} paper_trades={}/24".format(fill.leader,fill.side,fill.outcome,len(build.fills),build.total_usd,build.vwap,current,None if slip is None else round(slip,4),copied),flush=True)
     def flush_sessions(self,now):
         for session in self.sessions.pop_ready(now): self._store_session(session,now)
     def _store_session(self,session,now):
         fill=session.fills[-1]; current=self.client.executable_price(fill.token_id,fill.side); mark=None
-        if current is not None and session.vwap>0:
-            mark=(current-session.vwap)/session.vwap if fill.side=="BUY" else (session.vwap-current)/session.vwap
+        if current is not None and session.vwap>0: mark=(current-session.vwap)/session.vwap if fill.side=="BUY" else (session.vwap-current)/session.vwap
         duration=max(0,(session.fills[-1].observed_at-session.fills[0].observed_at).total_seconds())
         self.store.insert("position_sessions",{"closed_at":now,"leader":fill.leader,"wallet":fill.wallet,"market":fill.market,"event":fill.event,"outcome":fill.outcome,"side":fill.side,"token_id":fill.token_id,"fill_count":len(session.fills),"session_usdc":session.total_usd,"leader_vwap":session.vwap,"session_duration_seconds":duration,"current_price":current,"mark_pnl_pct":mark})
-        print("[SESSION] {} {} {} fills={} total=${:.2f} VWAP={:.4f} mark={} mark_pnl={}".format(fill.leader,fill.side,fill.outcome,len(session.fills),session.total_usd,session.vwap,current,None if mark is None else round(mark*100,2)),flush=True)
+        marked=0
+        if current is not None:
+            for trade_id,side,entry,stake,shares in self.store.paper_trades_for_token(fill.token_id):
+                value=shares*current
+                pnl=(current-entry)*shares if side=="BUY" else (entry-current)*shares
+                self.store.insert("paper_marks",{"marked_at":now,"trade_id":trade_id,"mark_price":current,"value_usd":value,"pnl_usd":pnl,"pnl_pct":pnl/stake if stake else 0.0}); marked+=1
+        print("[SESSION] {} {} {} fills={} total=${:.2f} VWAP={:.4f} mark={} leader_mark_pnl={} paper_marks={}".format(fill.leader,fill.side,fill.outcome,len(session.fills),session.total_usd,session.vwap,current,None if mark is None else round(mark*100,2),marked),flush=True)
