@@ -16,6 +16,9 @@ class PolymarketPublicClient:
     def executable_price(self,token_id,side):
         book=self.order_book(token_id)
         levels=book.get("asks" if side.upper()=="BUY" else "bids",[])
-        return float(levels[0]["price"]) if levels else None
+        if not levels:
+            return None
+        prices=[float(level["price"]) for level in levels]
+        return min(prices) if side.upper()=="BUY" else max(prices)
     def close(self):
         self.client.close()
