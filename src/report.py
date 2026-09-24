@@ -74,17 +74,25 @@ def strategy_stats(db, leader, strategy):
     equity = 0.0
     peak = 0.0
     max_dd = 0.0
-    max_dd_pct_of_settled_capital = 0.0
-    capital_seen = 0.0
+    win_streak = loss_streak = 0
+    max_win_streak = max_loss_streak = 0
     equity_points = []
     for trade_id, opened_at, stake, settled_at, pnl in settled_rows:
-        capital_seen += float(stake)
+        pnl = float(pnl)
+        if pnl > 1e-9:
+            win_streak += 1
+            loss_streak = 0
+        elif pnl < -1e-9:
+            loss_streak += 1
+            win_streak = 0
+        else:
+            win_streak = loss_streak = 0
+        max_win_streak = max(max_win_streak, win_streak)
+        max_loss_streak = max(max_loss_streak, loss_streak)
         equity += float(pnl)
         peak = max(peak, equity)
         dd = peak - equity
         max_dd = max(max_dd, dd)
-        if capital_seen > 0:
-            max_dd_pct_of_settled_capital = max(max_dd_pct_of_settled_capital, 100.0 * dd / capital_seen)
         equity_points.append((settled_at, equity))
 
     return {
@@ -97,7 +105,10 @@ def strategy_stats(db, leader, strategy):
         "profit_factor": profit_factor, "settled_roi": settled_roi,
         "open_exposure": open_exposure, "marked_open": marked_open,
         "unrealized": unrealized, "max_dd": max_dd,
-        "max_dd_pct": max_dd_pct_of_settled_capital,
+        "max_win_streak": max_win_streak,
+        "max_loss_streak": max_loss_streak,
+        "expectancy": realized / settled if settled else None,
+        "settled_pct": pct(settled, trades),
         "equity": equity, "equity_points": equity_points,
     }
 
@@ -109,7 +120,7 @@ def pf_text(x):
 def main():
     db = sqlite3.connect(DB_PATH)
     leaders = [r[0] for r in db.execute("SELECT DISTINCT leader FROM raw_fills ORDER BY leader")]
-    print("=== POLYMARKET PAPER REPORT v0.7 ===")
+    print("=== POLYMARKET PAPER REPORT v0.8 ===")
     print("Closed performance is separated from open mark-to-market. Rankings are not implied.")
 
     for leader in leaders:
@@ -157,15 +168,20 @@ def main():
         print("\nSAMPLE / RISK DETAILS:")
         for s in strategies:
             x = stats[s]
-            print("  {:16s} trades={:4d} settled_cap=${:8.2f} closed_equity=${:8.2f} maxDD=${:8.2f} maxDD/settled_cap={:6.2f}%".format(
-                s, x["trades"], x["settled_invested"], x["equity"], x["max_dd"], x["max_dd_pct"]))
+            expectancy = "n/a" if x["expectancy"] is None else "${:.2f}".format(x["expectancy"])
+            print("  {:16s} trades={:4d} settled_cap=${:8.2f} closed_equity=${:8.2f} maxDD=${:8.2f}".format(
+                s, x["trades"], x["settled_invested"], x["equity"], x["max_dd"]))
+            print("    settled={}/{} ({:.2f}%) max_win_streak={} max_loss_streak={} expectancy={}/settled".format(
+                x["settled"], x["trades"], x["settled_pct"], x["max_win_streak"], x["max_loss_streak"], expectancy))
 
     print("\nNOTES:")
     print("  settled ROI = realized PnL / stake of settled trades only.")
     print("  open exposure and unrealized PnL are shown separately and never mixed into settled ROI.")
     print("  PF = gross settled profits / absolute gross settled losses.")
     print("  max_DD = maximum peak-to-trough drawdown of cumulative realized PnL in settlement order.")
-    print("  maxDD/settled_cap is a diagnostic ratio, not an account-level drawdown percentage.")
+    print("  Streaks use settlement order (settled_at, trade id); pushes break both streaks.")
+    print("  expectancy = realized PnL / all settled trades, including pushes; n/a if none settled.")
+    print("  settled% = settled trades / all trades for that leader and strategy.")
 
 
 if __name__ == "__main__":
