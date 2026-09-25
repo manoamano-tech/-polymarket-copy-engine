@@ -15,6 +15,10 @@ def payload():
  running=0
  for x in equity: running+=x['trade_pnl']; x['pnl']=round(running,2)
  leader_stats=q("select t.leader,count(*) trades,count(s.trade_id) settled,round(coalesce(sum(s.realized_pnl_usd),0),2) pnl,round(coalesce(sum(s.realized_pnl_usd)/nullif(sum(case when s.trade_id is not null then t.stake_usd else 0 end),0)*100,0),2) roi from paper_trades t left join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' group by t.leader order by trades desc")
+ trader_cards=q("select r.leader,count(*) fills,round(sum(r.leader_usdc),0) volume,datetime(max(r.observed_at),'unixepoch') last_seen,(select count(*) from paper_builds b where b.leader=r.leader) builds,(select round(avg(b.build_usdc),2) from paper_builds b where b.leader=r.leader) avg_build from raw_fills r group by r.leader order by fills desc")
+ fwdmap={x['leader']:x for x in leader_stats}
+ for x in trader_cards:
+  x.update(fwdmap.get(x['leader'],{'trades':0,'settled':0,'pnl':0,'roi':0}))
  maxdd=0; peak=0
  for x in equity:
   peak=max(peak,x['pnl']); maxdd=max(maxdd,peak-x['pnl'])
@@ -22,7 +26,7 @@ def payload():
  rn.update(q("select count(*) trades,count(s.trade_id) settled,round(coalesce(sum(s.realized_pnl_usd),0),2) pnl,round(coalesce(sum(s.realized_pnl_usd)/nullif(sum(case when s.trade_id is not null then t.stake_usd else 0 end),0)*100,0),2) roi,round(100.0*sum(case when s.realized_pnl_usd>0 then 1 else 0 end)/nullif(count(s.trade_id),0),1) winrate from paper_trades t left join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' and t.leader='RN1'")[0]); rn['max_drawdown']=round(maxdd,2)
  reasons=q("select d.reason,count(*) n from strategy_decisions d join paper_builds b on b.id=d.build_id where d.strategy='S500_SLIP1c_F2_9' and b.leader='RN1' and d.action='SKIP' group by d.reason order by n desc")
  decisions=q("select datetime(b.decided_at,'unixepoch') decided,b.leader,b.event,b.outcome,round(b.build_usdc,2) build_usd,b.fill_count,round(b.leader_vwap,3) leader_price,round(b.current_price,3) our_price,round(100*b.slippage,2) slip,d.action,d.reason from strategy_decisions d join paper_builds b on b.id=d.build_id where d.strategy='S500_SLIP1c_F2_9' order by d.id desc limit 40")
- return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity,'decisions':decisions,'rn1':rn,'rn1_reasons':reasons,'leader_stats':leader_stats}
+ return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity,'decisions':decisions,'rn1':rn,'rn1_reasons':reasons,'leader_stats':leader_stats,'trader_cards':trader_cards}
 class H(BaseHTTPRequestHandler):
  def do_GET(self):
   if self.path!='/api/dashboard': self.send_response(404); self.end_headers(); return
