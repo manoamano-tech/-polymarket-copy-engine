@@ -34,6 +34,24 @@ class PolymarketPublicClient:
         if not (valid_binary or valid_half): return {"status":"AMBIGUOUS","source":source}
         idx=tids.index(token); winner_idx=vals.index(1.0) if valid_binary else None
         return {"status":"VERIFIED","source":source,"market_id":str(m.get("id") or ""),"question":str(m.get("question") or ""),"token_id":token,"token_outcome":str(outcomes[idx]) if idx<len(outcomes) else "","winning_outcome":str(outcomes[winner_idx]) if winner_idx is not None and winner_idx<len(outcomes) else "50/50","settlement_price":vals[idx]}
+    def _resolution_from_clob_market(self,m,token_id):
+        token=str(token_id); condition=str(m.get("condition_id") or "").lower()
+        tokens=m.get("tokens") or []; matches=[t for t in tokens if str(t.get("token_id"))==token]
+        if len(matches)!=1: return {"status":"TOKEN_MISMATCH","source":"clob_condition_id"}
+        if not bool(m.get("closed")): return {"status":"ACTIVE","source":"clob_condition_id"}
+        try: prices=[float(t.get("price")) for t in tokens]
+        except Exception: return {"status":"AMBIGUOUS","source":"clob_condition_id"}
+        winners=[i for i,t in enumerate(tokens) if bool(t.get("winner"))]
+        valid_binary=len(tokens)>=2 and all(v in (0.0,1.0) for v in prices) and len(winners)==1
+        valid_half=len(tokens)==2 and bool(m.get("is_50_50_outcome")) and all(abs(v-0.5)<1e-9 for v in prices)
+        if not (valid_binary or valid_half): return {"status":"AMBIGUOUS","source":"clob_condition_id"}
+        idx=next(i for i,t in enumerate(tokens) if str(t.get("token_id"))==token)
+        winner_idx=winners[0] if valid_binary else None
+        return {"status":"VERIFIED","source":"clob_condition_id","market_id":condition,
+                "question":str(m.get("question") or ""),"token_id":token,
+                "token_outcome":str(tokens[idx].get("outcome") or ""),
+                "winning_outcome":str(tokens[winner_idx].get("outcome") or "") if winner_idx is not None else "50/50",
+                "settlement_price":prices[idx]}
     def market_resolution(self,condition_id,token_id,event_slug=None):
         """Resolve conservatively. Try condition id first, then official Gamma event-by-slug fallback."""
         token=str(token_id); condition=str(condition_id or "").lower(); diagnostics=[]
@@ -46,6 +64,15 @@ class PolymarketPublicClient:
                     result=self._resolution_from_market(m,token,"condition_id")
                     if result["status"] in ("VERIFIED","ACTIVE","AMBIGUOUS"): return result
                     diagnostics.append(result["status"])
+            if condition:
+                r=self.client.get(CLOB_API+"/markets/"+condition)
+                if r.status_code==200:
+                    m=r.json()
+                    if str(m.get("condition_id") or "").lower()==condition:
+                        result=self._resolution_from_clob_market(m,token)
+                        if result["status"] in ("VERIFIED","ACTIVE","AMBIGUOUS"): return result
+                        diagnostics.append(result["status"])
+                elif r.status_code not in (404,422): r.raise_for_status()
             if event_slug:
                 r=self.client.get(GAMMA_API+"/events/slug/"+str(event_slug));
                 if r.status_code==200:
