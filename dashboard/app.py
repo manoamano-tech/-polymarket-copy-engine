@@ -11,9 +11,15 @@ def payload():
  latest=q("select datetime(t.opened_at,'unixepoch') opened,t.strategy,t.leader,t.event,t.outcome,round(b.build_usdc,2) build_usd,b.fill_count,round(b.leader_vwap,3) leader_price,round(b.current_price,3) our_price,round(100*b.slippage,2) slip,case when s.trade_id is null then 'OPEN' else 'SETTLED' end status,round(s.realized_pnl_usd,2) pnl from paper_trades t join paper_builds b on b.id=t.build_id left join settlements s on s.trade_id=t.id order by t.id desc limit 60")
  leaders=q("select leader,count(*) fills,round(sum(leader_usdc),0) volume,datetime(max(observed_at),'unixepoch') last_seen from raw_fills group by leader order by max(observed_at) desc")
  fwd=next((x for x in strategies if x['strategy']=='S500_SLIP1c_F2_9'),{'trades':0,'settled':0,'pnl':0,'roi':0,'winrate':0})
- equity=q("select s.settled_at ts,round(sum(s.realized_pnl_usd) over(order by s.settled_at,s.trade_id),2) pnl from paper_trades t join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' order by s.settled_at,s.trade_id")
+ equity=q("select s.trade_id,s.settled_at ts,datetime(s.settled_at,'unixepoch') settled,t.event,t.outcome,round(s.realized_pnl_usd,2) trade_pnl,round(sum(s.realized_pnl_usd) over(order by s.settled_at,s.trade_id),2) pnl from paper_trades t join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' order by s.settled_at,s.trade_id")
+ maxdd=0; peak=0
+ for x in equity:
+  peak=max(peak,x['pnl']); maxdd=max(maxdd,peak-x['pnl'])
+ rn=q("select count(*) builds,round(avg(build_usdc),2) avg_build,round(avg(fill_count),1) avg_fills,datetime(max(decided_at),'unixepoch') last_seen from paper_builds where leader='RN1'")[0]
+ rn.update(q("select count(*) trades,count(s.trade_id) settled,round(coalesce(sum(s.realized_pnl_usd),0),2) pnl,round(coalesce(sum(s.realized_pnl_usd)/nullif(sum(case when s.trade_id is not null then t.stake_usd else 0 end),0)*100,0),2) roi,round(100.0*sum(case when s.realized_pnl_usd>0 then 1 else 0 end)/nullif(count(s.trade_id),0),1) winrate from paper_trades t left join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' and t.leader='RN1'")[0]); rn['max_drawdown']=round(maxdd,2)
+ reasons=q("select d.reason,count(*) n from strategy_decisions d join paper_builds b on b.id=d.build_id where d.strategy='S500_SLIP1c_F2_9' and b.leader='RN1' and d.action='SKIP' group by d.reason order by n desc")
  decisions=q("select datetime(b.decided_at,'unixepoch') decided,b.leader,b.event,b.outcome,round(b.build_usdc,2) build_usd,b.fill_count,round(b.leader_vwap,3) leader_price,round(b.current_price,3) our_price,round(100*b.slippage,2) slip,d.action,d.reason from strategy_decisions d join paper_builds b on b.id=d.build_id where d.strategy='S500_SLIP1c_F2_9' order by d.id desc limit 40")
- return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity,'decisions':decisions}
+ return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity,'decisions':decisions,'rn1':rn,'rn1_reasons':reasons}
 class H(BaseHTTPRequestHandler):
  def do_GET(self):
   if self.path!='/api/dashboard': self.send_response(404); self.end_headers(); return
