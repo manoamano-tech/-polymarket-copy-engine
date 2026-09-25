@@ -5,3 +5,12 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data:ro
+    ports:
+      - "127.0.0.1:8765:8765"
