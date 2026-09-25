@@ -11,7 +11,8 @@ def payload():
  latest=q("select datetime(t.opened_at,'unixepoch') opened,t.strategy,t.leader,t.event,t.outcome,round(t.entry_price,3) entry,t.stake_usd,case when s.trade_id is null then 'OPEN' else 'SETTLED' end status,round(s.realized_pnl_usd,2) pnl from paper_trades t left join settlements s on s.trade_id=t.id order by t.id desc limit 30")
  leaders=q("select leader,count(*) fills,round(sum(leader_usdc),0) volume,datetime(max(observed_at),'unixepoch') last_seen from raw_fills group by leader order by max(observed_at) desc")
  fwd=next((x for x in strategies if x['strategy']=='S500_SLIP1c_F2_9'),{'trades':0,'settled':0,'pnl':0,'roi':0})
- return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders}
+ equity=q("select s.settled_at ts,round(sum(s.realized_pnl_usd) over(order by s.settled_at,s.trade_id),2) pnl from paper_trades t join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' order by s.settled_at,s.trade_id")
+ return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity}
 class H(BaseHTTPRequestHandler):
  def do_GET(self):
   if self.path!='/api/dashboard': self.send_response(404); self.end_headers(); return
