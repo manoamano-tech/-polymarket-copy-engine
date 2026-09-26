@@ -223,13 +223,18 @@ def payload():
  for x in fc['leaders']:
   cards.append({'leader':x['leader'],'fills':x['fills'],'markets':0,'volume':x['leader_volume'],'avg_fill':round(x['leader_volume']/x['fills'],2) if x['fills'] else 0,'last_seen':time.strftime('%Y-%m-%d %H:%M:%S',time.gmtime(x['last_seen_ts'])),'trades':0,'settled':0,'pnl':x['pnl'],'roi':x['roi'],'history':{},'leader_performance':{'buy_fills':x['fills'],'sell_fills':0,'settled_fills':x['settled_fills'],'settled_volume':x['copied']*100,'pnl':x['pnl']*100,'wallet_observed_pnl':x['pnl']*100,'realized_pnl':x['pnl']*100,'unrealized_pnl':None,'open_positions':x['open_fills'],'priced_open_positions':0,'open_value':None,'roi':x['roi']}})
  return {'ts':int(time.time()),'trader_cards':cards,'equity':[],'fill_copy':fc}
+def account_payload():
+ profiles=[dict(x) for x in q("select id,name,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode,created_at,updated_at from copy_profiles order by id")]
+ attempts=[dict(x) for x in q("select id,profile_id,fill_id,decided_at,leader,sport,league,leader_price,requested_usd,executable_price,slippage,status,reason,filled_usd,fill_price from copy_attempts order by id desc limit 100")]
+ return {'wallet_connected':False,'live_execution':False,'profiles':profiles,'attempts':attempts}
 class H(BaseHTTPRequestHandler):
  def do_GET(self):
   u=urlparse(self.path)
-  if u.path not in ('/api/dashboard','/api/backtest','/api/history','/api/positions'): self.send_response(404); self.end_headers(); return
+  if u.path not in ('/api/dashboard','/api/backtest','/api/history','/api/positions','/api/account'): self.send_response(404); self.end_headers(); return
   try:
    z={k:v[-1] for k,v in parse_qs(u.query).items()}
    if u.path=='/api/dashboard': data=payload()
+   elif u.path=='/api/account': data=account_payload()
    elif u.path=='/api/history': data=history_positions(z)
    elif u.path=='/api/positions': data=observed_positions(z.get('leader'),z.get('status','all'),z.get('limit',500))
    else:

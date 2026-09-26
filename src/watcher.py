@@ -5,6 +5,7 @@ from .aggregator import TimedFillAggregator
 from .sessions import SessionAggregator
 from .strategies import evaluate_matrix
 from .classification import classify_sport
+from .copy_engine import evaluate_fill
 
 def fingerprint(row):
     raw="|".join(str(row.get(k,"")) for k in ("transactionHash","asset","side","price","size","timestamp"))
@@ -40,6 +41,10 @@ class WalletWatcher:
         latency=max(0,now-ts); fill_id=self.store.insert("raw_fills",{"observed_at":now,"trade_ts":ts,"latency_seconds":latency,"leader":leader.name,"wallet":leader.wallet,"transaction_hash":fill.transaction_hash,"market":fill.market,"event":fill.event,"outcome":fill.outcome,"side":side,"token_id":token,"leader_price":price,"leader_usdc":usdc,"sport":sport,"league":league})
         if leader.name=="RN1":
             for delay in self.snapshot_delays: self.snapshot_queue.append((now+delay,fill_id,now,token,side,delay))
+        # The profile/filter pipeline is active now; execution remains DRY_RUN until wallet auth is connected.
+        if side=="BUY":
+            book_price=self.client.executable_price(token,side)
+            evaluate_fill(self.store,fill_id,leader.name,token,sport,league,price,book_price)
         print("[FILL] {} {} {} ${:.2f} @ {:.4f} api_latency={:.1f}s".format(leader.name,side,fill.outcome,usdc,price,latency),flush=True)
     def flush_price_snapshots(self,now,max_per_poll=12):
         # Record actual sample time as well as target delay; delayed samples are never backdated.
