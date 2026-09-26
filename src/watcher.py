@@ -12,7 +12,7 @@ def fingerprint(row):
 class WalletWatcher:
     def __init__(self,client,store,leaders,base_trade=50,build_window=30,session_gap=300):
         self.client,self.store,self.leaders=client,store,leaders; self.base_trade=float(base_trade)
-        self.aggregator=TimedFillAggregator(build_window); self.sessions=SessionAggregator(session_gap)
+        self.aggregator=TimedFillAggregator(build_window); self.sessions=SessionAggregator(session_gap); self.snapshot_queue=[]; self.snapshot_delays=(0,5,10,15,30,60)
     def bootstrap(self):
         marked=0
         for leader in self.leaders:
@@ -27,7 +27,7 @@ class WalletWatcher:
                 fp=fingerprint(row)
                 if self.store.seen(fp): continue
                 now=time.time(); ts=int(row.get("timestamp") or now); self.store.mark_seen(fp,ts); self._collect(leader,row,now,ts); handled+=1
-        now=time.time(); self.flush_ready(now); self.flush_sessions(now); return handled
+        now=time.time(); self.flush_price_snapshots(now); self.flush_ready(now); self.flush_sessions(now); return handled
     def _collect(self,leader,row,now,ts):
         token=str(row.get("asset") or "")
         if not token: return
@@ -35,8 +35,20 @@ class WalletWatcher:
         fill=LeaderFill(leader.name,leader.wallet,str(row.get("conditionId") or ""),str(row.get("eventSlug") or ""),str(row.get("outcome") or ""),side,price,usdc,datetime.fromtimestamp(ts,tz=timezone.utc),token,str(row.get("transactionHash") or ""))
         self.aggregator.add(fill,now); closed=self.sessions.add(fill,now)
         if closed: self._store_session(closed,now)
-        latency=max(0,now-ts); self.store.insert("raw_fills",{"observed_at":now,"trade_ts":ts,"latency_seconds":latency,"leader":leader.name,"wallet":leader.wallet,"transaction_hash":fill.transaction_hash,"market":fill.market,"event":fill.event,"outcome":fill.outcome,"side":side,"token_id":token,"leader_price":price,"leader_usdc":usdc})
+        latency=max(0,now-ts); fill_id=self.store.insert("raw_fills",{"observed_at":now,"trade_ts":ts,"latency_seconds":latency,"leader":leader.name,"wallet":leader.wallet,"transaction_hash":fill.transaction_hash,"market":fill.market,"event":fill.event,"outcome":fill.outcome,"side":side,"token_id":token,"leader_price":price,"leader_usdc":usdc})
+        if leader.name=="RN1":
+            for delay in self.snapshot_delays: self.snapshot_queue.append((now+delay,fill_id,now,token,side,delay))
         print("[FILL] {} {} {} ${:.2f} @ {:.4f} api_latency={:.1f}s".format(leader.name,side,fill.outcome,usdc,price,latency),flush=True)
+    def flush_price_snapshots(self,now,max_per_poll=12):
+        # Record actual sample time as well as target delay; delayed samples are never backdated.
+        self.snapshot_queue.sort(key=lambda x:x[0]); done=0; keep=[]
+        for due,fill_id,observed,token,side,target in self.snapshot_queue:
+            if due>now or done>=max_per_poll:
+                keep.append((due,fill_id,observed,token,side,target)); continue
+            sampled=time.time(); price=self.client.executable_price(token,side)
+            self.store.insert("fill_price_snapshots",{"fill_id":fill_id,"target_delay_seconds":target,"sampled_at":sampled,"actual_delay_seconds":sampled-observed,"executable_price":price})
+            done+=1
+        self.snapshot_queue=keep
     def flush_ready(self,now):
         for build in self.aggregator.pop_ready(now):
             fill=build.fills[-1]; current=self.client.executable_price(fill.token_id,fill.side); slip=None if current is None else (current-build.vwap if fill.side=="BUY" else build.vwap-current)
