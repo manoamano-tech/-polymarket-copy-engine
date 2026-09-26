@@ -75,9 +75,17 @@ def leader_fill_performance():
    z=sm.get(key)
    if z and z[1]>=pos['last_ts'] and pos['shares']>0:
     sp=z[0]; d['settlement_pnl']+=pos['shares']*sp-pos['cost']; pos['shares']=0; pos['cost']=0
-   d['open_shares']+=pos['shares']
-  d['wallet_observed_pnl']=round(d['realized_sell_pnl']+d['settlement_pnl'],2)
-  for k in ('pnl','settled_volume','realized_sell_pnl','settlement_pnl','open_shares','oversold_shares'): d[k]=round(d[k],2)
+   if pos['shares']>0:
+    d['open_shares']+=pos['shares']; d.setdefault('_open',[]).append((key[1],pos['shares'],pos['cost']))
+  unreal=0.0; open_value=0.0; priced=0; open_count=len(d.get('_open',[]))
+  for token,shares,cost in d.pop('_open',[]):
+   try: mark=client.executable_price(token,'SELL')
+   except Exception: mark=None
+   if mark is not None:
+    open_value+=shares*mark; unreal+=shares*mark-cost; priced+=1
+  d['unrealized_pnl']=round(unreal,2) if priced else None; d['open_value']=round(open_value,2) if priced else None; d['open_positions']=open_count; d['priced_open_positions']=priced
+  d['realized_pnl']=round(d['realized_sell_pnl']+d['settlement_pnl'],2); d['wallet_observed_pnl']=round(d['realized_pnl']+d['unrealized_pnl'],2) if d['unrealized_pnl'] is not None else d['realized_pnl']
+  for k in ('pnl','settled_volume','realized_sell_pnl','settlement_pnl','open_shares','oversold_shares','realized_pnl'): d[k]=round(d[k],2)
   d['roi']=round(100*d['pnl']/d['settled_volume'],2) if d['settled_volume'] else 0; d['winrate']=round(100*d['wins']/d['settled_fills'],1) if d['settled_fills'] else 0
  return out
 
