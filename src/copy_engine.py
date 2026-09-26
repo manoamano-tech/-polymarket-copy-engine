@@ -1,8 +1,11 @@
 """Copy execution policy. LIVE transport is intentionally disabled until wallet auth is connected."""
 import time
 
-def evaluate_fill(store, fill_id, leader, token_id, sport, league, leader_price, executable_price=None, min_order_size=None):
-    profiles=store.db.execute("SELECT id,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode FROM copy_profiles WHERE enabled=1 AND leader=?",(leader,)).fetchall()
+def evaluate_fill(store, fill_id, leader, token_id, sport, league, leader_price, executable_price=None, min_order_size=None, profile_id=None):
+    if profile_id is None:
+        profiles=store.db.execute("SELECT id,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode FROM copy_profiles WHERE enabled=1 AND leader=? AND COALESCE(source_type,'PUBLIC')='PUBLIC'",(leader,)).fetchall()
+    else:
+        profiles=store.db.execute("SELECT id,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode FROM copy_profiles WHERE enabled=1 AND id=?",(profile_id,)).fetchall()
     for p in profiles:
         pid,_,stake,sf,lf,max_slip,_,mode=p
         if sf!='*' and sf!=sport: status,reason='SKIP_SPORT','sport_filter'

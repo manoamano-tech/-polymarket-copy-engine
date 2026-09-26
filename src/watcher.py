@@ -6,6 +6,7 @@ from .sessions import SessionAggregator
 from .strategies import evaluate_matrix
 from .classification import classify_sport
 from .copy_engine import evaluate_fill
+from types import SimpleNamespace
 
 def fingerprint(row):
     raw="|".join(str(row.get(k,"")) for k in ("transactionHash","asset","side","price","size","timestamp"))
@@ -22,8 +23,30 @@ class WalletWatcher:
                 fp=fingerprint(row)
                 if not self.store.seen(fp): self.store.mark_seen(fp,int(row.get("timestamp") or time.time())); marked+=1
         return marked
-    def poll_once(self):
+    def private_profiles(self):
+        rows=self.store.db.execute("SELECT id,leader,source_wallet FROM copy_profiles WHERE enabled=1 AND source_type='PRIVATE' AND source_wallet IS NOT NULL AND source_wallet!=''").fetchall()
+        return rows
+    def _poll_private(self):
         handled=0
+        for pid,label,wallet in self.private_profiles():
+            try: rows=self.client.trades(wallet,100)
+            except Exception as e:
+                print("[PRIVATE] poll failed profile={} {}".format(pid,e),flush=True);continue
+            for row in reversed(rows):
+                fp=fingerprint(row)
+                if self.store.db.execute("SELECT 1 FROM private_raw_fills WHERE profile_id=? AND fingerprint=?",(pid,fp)).fetchone():continue
+                now=time.time();ts=int(row.get("timestamp") or now)
+                # First observation is a cursor/bootstrap only: never copy historical catch-up fills.
+                newest=self.store.db.execute("SELECT 1 FROM private_raw_fills WHERE profile_id=? LIMIT 1",(pid,)).fetchone()
+                token=str(row.get("asset") or "");side=str(row.get("side") or "BUY").upper();price=float(row.get("price") or 0);usdc=float(row.get("usdcSize") or (float(row.get("size") or 0)*price));event=str(row.get("eventSlug") or "");sport,league=classify_sport(event)
+                cur=self.store.db.execute("INSERT OR IGNORE INTO private_raw_fills(profile_id,fingerprint,observed_at,trade_ts,wallet,transaction_hash,market,event,outcome,side,token_id,leader_price,leader_usdc,sport,league) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(pid,fp,now,ts,wallet,str(row.get('transactionHash') or ''),str(row.get('conditionId') or ''),event,str(row.get('outcome') or ''),side,token,price,usdc,sport,league));self.store.db.commit()
+                # Copy only fresh signals after the profile has a cursor; private history stays private.
+                if newest and side=='BUY' and now-ts<=30 and token:
+                    book=self.client.executable_price(token,side);evaluate_fill(self.store,-cur.lastrowid,label,token,sport,league,price,book,profile_id=pid)
+                handled+=1
+        return handled
+    def poll_once(self):
+        handled=self._poll_private()
         for leader in self.leaders:
             for row in reversed(self.client.trades(leader.wallet,100)):
                 fp=fingerprint(row)

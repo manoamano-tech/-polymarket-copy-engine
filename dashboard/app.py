@@ -253,7 +253,7 @@ def current_user(cookie):
  rows=q("select u.id,u.email from user_sessions s join users u on u.id=s.user_id where s.token_hash=? and s.expires_at>?",(token_hash(token),time.time()))
  return rows[0] if rows else None
 def account_payload(uid):
- profiles=q("select id,name,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode,created_at,updated_at from copy_profiles where user_id=? order by id",(uid,))
+ profiles=q("select id,name,leader,source_wallet,source_type,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode,created_at,updated_at from copy_profiles where user_id=? order by id",(uid,))
  attempts=[]
  if profiles:
   ids=[x['id'] for x in profiles]; marks=','.join('?'*len(ids)); attempts=q("select id,profile_id,fill_id,decided_at,leader,sport,league,leader_price,requested_usd,executable_price,slippage,status,reason,filled_usd,fill_price from copy_attempts where profile_id in ("+marks+") order by id desc limit 100",ids)
@@ -265,7 +265,7 @@ def account_payload(uid):
   if a['status'] in ('DRY_RUN','FILLED','LIVE_FILLED'):stats['passed']+=1
   elif str(a['status']).startswith('SKIP'):stats['skipped']+=1
  # DRY-run PnL: only passed attempts with a known settlement for the source fill.
- settled=q("""select ca.id,ca.requested_usd,ca.executable_price,rf.market,rf.token_id,rf.trade_ts,s.settlement_price,s.settled_at from copy_attempts ca join raw_fills rf on rf.id=ca.fill_id join paper_trades pt on pt.market=rf.market and pt.token_id=rf.token_id join settlements s on s.trade_id=pt.id where ca.profile_id in ("""+(','.join('?'*len(ids)) if profiles else 'NULL')+") and ca.status='DRY_RUN' and ca.executable_price>0 and s.settled_at>=rf.trade_ts group by ca.id",ids if profiles else []) if profiles else []
+ settled=q("""select ca.id,ca.requested_usd,ca.executable_price,rf.market,rf.token_id,rf.trade_ts,s.settlement_price,s.settled_at from copy_attempts ca join raw_fills rf on rf.id=ca.fill_id join paper_trades pt on pt.market=rf.market and pt.token_id=rf.token_id join settlements s on s.trade_id=pt.id where ca.fill_id>0 and ca.profile_id in ("""+(','.join('?'*len(ids)) if profiles else 'NULL')+") and ca.status='DRY_RUN' and ca.executable_price>0 and s.settled_at>=rf.trade_ts group by ca.id",ids if profiles else []) if profiles else []
  for z in settled:
   pnl=float(z['requested_usd'])*(float(z['settlement_price'])/float(z['executable_price'])-1);stats['settled']+=1;stats['invested']+=float(z['requested_usd']);stats['pnl']+=pnl
  stats['pnl']=round(stats['pnl'],2);stats['invested']=round(stats['invested'],2);stats['roi']=round(stats['pnl']/stats['invested']*100,2) if stats['invested'] else None
@@ -297,11 +297,14 @@ class H(BaseHTTPRequestHandler):
     u=current_user(self.headers.get('Cookie'))
     if not u:return self.send_json(401,{'error':'unauthorized'})
     leader=(d.get('leader') or '').strip();stake=float(d.get('stake_usd',2));sport=(d.get('sport_filter') or '*').strip();league=(d.get('league_filter') or '*').strip();slip=float(d.get('max_slippage',.03))
+    curated={x['leader']:x['wallet'] for x in q("select leader,wallet from raw_fills where leader is not null group by leader")}
+    is_wallet=bool(re.fullmatch(r'0x[a-fA-F0-9]{40}',leader));source_type='PRIVATE' if is_wallet else 'PUBLIC';source_wallet=leader.lower() if is_wallet else curated.get(leader)
+    if source_type=='PUBLIC' and not source_wallet:return self.send_json(400,{'error':'Выберите трейдера из списка или укажите 0x-кошелёк'})
     if not leader or len(leader)>128:return self.send_json(400,{'error':'Укажите трейдера или кошелёк'})
     if not (.1<=stake<=10000):return self.send_json(400,{'error':'Некорректная сумма'})
     if not (0<=slip<=1):return self.send_json(400,{'error':'Некорректное проскальзывание'})
     ps=q('select id from copy_profiles where user_id=? order by id limit 1',(u['id'],));now=time.time()
-    if ps:db_exec('update copy_profiles set leader=?,name=?,stake_usd=?,sport_filter=?,league_filter=?,max_slippage=?,updated_at=? where id=?',(leader,leader+' · copy',stake,sport,league,slip,now,ps[0]['id']))
+    if ps:db_exec('update copy_profiles set leader=?,name=?,source_wallet=?,source_type=?,stake_usd=?,sport_filter=?,league_filter=?,max_slippage=?,updated_at=? where id=?',(leader,leader+' · copy',source_wallet,source_type,stake,sport,league,slip,now,ps[0]['id']))
     else:db_exec("insert into copy_profiles(user_id,name,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)",(u['id'],leader+' · copy',leader,stake,sport,league,slip,1,'DRY_RUN',now,now))
     return self.send_json(200,{'ok':True})
    elif self.path=='/api/logout':
