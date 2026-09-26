@@ -54,15 +54,33 @@ def leader_fill_performance():
  sm={}
  for z in q("select t.market,t.token_id,s.settlement_price,s.settled_at from paper_trades t join settlements s on s.trade_id=t.id order by s.settled_at"): sm[(z['market'],z['token_id'])]=(float(z['settlement_price']),z['settled_at'])
  out={}
- for x in q("select leader,market,token_id,side,trade_ts,leader_price,leader_usdc from raw_fills order by trade_ts,id"):
-  d=out.setdefault(x['leader'],{'buy_fills':0,'settled_fills':0,'settled_volume':0.0,'pnl':0.0,'wins':0})
-  if x['side']!='BUY': continue
-  d['buy_fills']+=1; z=sm.get((x['market'],x['token_id']))
-  if z and z[1]>=x['trade_ts'] and float(x['leader_price'])>0:
-   p=float(x['leader_usdc'])*(z[0]/float(x['leader_price'])-1); d['settled_fills']+=1; d['settled_volume']+=float(x['leader_usdc']); d['pnl']+=p; d['wins']+=int(p>0)
- for d in out.values():
-  d['pnl']=round(d['pnl'],2); d['settled_volume']=round(d['settled_volume'],2); d['roi']=round(100*d['pnl']/d['settled_volume'],2) if d['settled_volume'] else 0; d['winrate']=round(100*d['wins']/d['settled_fills'],1) if d['settled_fills'] else 0
+ rows=q("select leader,market,token_id,side,trade_ts,leader_price,leader_usdc from raw_fills order by leader,trade_ts,id")
+ for x in rows:
+  d=out.setdefault(x['leader'],{'buy_fills':0,'sell_fills':0,'settled_fills':0,'settled_volume':0.0,'pnl':0.0,'wins':0,'realized_sell_pnl':0.0,'settlement_pnl':0.0,'open_shares':0.0,'oversold_shares':0.0})
+  price=float(x['leader_price']); usd=float(x['leader_usdc']); side=x['side']; key=(x['market'],x['token_id']); shares=usd/price if price>0 else 0
+  pos=d.setdefault('_pos',{}).setdefault(key,{'shares':0.0,'cost':0.0,'last_ts':0})
+  if side=='BUY':
+   d['buy_fills']+=1; pos['shares']+=shares; pos['cost']+=usd; pos['last_ts']=x['trade_ts']
+   z=sm.get(key)
+   if z and z[1]>=x['trade_ts']:
+    p=usd*(z[0]/price-1); d['settled_fills']+=1; d['settled_volume']+=usd; d['pnl']+=p; d['wins']+=int(p>0)
+  elif side=='SELL':
+   d['sell_fills']+=1
+   close=min(shares,pos['shares'])
+   if close>0:
+    avg=pos['cost']/pos['shares']; rp=close*(price-avg); d['realized_sell_pnl']+=rp; pos['cost']-=close*avg; pos['shares']-=close
+   if shares>close: d['oversold_shares']+=shares-close
+ for leader,d in out.items():
+  for key,pos in d.pop('_pos',{}).items():
+   z=sm.get(key)
+   if z and z[1]>=pos['last_ts'] and pos['shares']>0:
+    sp=z[0]; d['settlement_pnl']+=pos['shares']*sp-pos['cost']; pos['shares']=0; pos['cost']=0
+   d['open_shares']+=pos['shares']
+  d['wallet_observed_pnl']=round(d['realized_sell_pnl']+d['settlement_pnl'],2)
+  for k in ('pnl','settled_volume','realized_sell_pnl','settlement_pnl','open_shares','oversold_shares'): d[k]=round(d[k],2)
+  d['roi']=round(100*d['pnl']/d['settled_volume'],2) if d['settled_volume'] else 0; d['winrate']=round(100*d['wins']/d['settled_fills'],1) if d['settled_fills'] else 0
  return out
+
 def payload():
  counts={r['k']:r['n'] for r in q("select 'fills' k,count(*) n from raw_fills union all select 'builds',count(*) from paper_builds union all select 'trades',count(*) from paper_trades union all select 'settled',count(*) from settlements")}
  strategies=q("select t.strategy,count(*) trades,count(s.trade_id) settled,round(coalesce(sum(s.realized_pnl_usd),0),2) pnl,round(coalesce(sum(s.realized_pnl_usd)/nullif(sum(case when s.trade_id is not null then t.stake_usd else 0 end),0)*100,0),2) roi,round(100.0*sum(case when s.realized_pnl_usd>0 then 1 else 0 end)/nullif(count(s.trade_id),0),1) winrate from paper_trades t left join settlements s on s.trade_id=t.id group by t.strategy order by roi desc")
