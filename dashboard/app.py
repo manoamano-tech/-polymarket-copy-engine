@@ -115,11 +115,11 @@ def size_research():
   out.append({'label':label,'positions':len(first),'settled':len(vals),'events':len(events),'pnl':round(pnl,2),'roi':round(100*pnl/invested,2) if invested else 0,'winrate':round(100*sum(v>0 for v in vals)/len(vals),1) if vals else 0,'first_half':h1,'second_half':h2})
  return out
 
-def classify_sport(event):
- e=(event or '').lower(); p=e.split('-')[0] if e else ''
+def classify_sport(event,question=''):
+ e=(event or '').lower(); q=(question or '').lower(); p=e.split('-')[0] if e else ''
  if p=='atp': return ('Tennis','ATP')
  if p=='wta': return ('Tennis','WTA')
- if p=='cs2': return ('Esports','CS2')
+ if p=='cs2' or q.startswith('counter-strike:'): return ('Esports','CS2')
  if p in ('lol','league'): return ('Esports','LoL')
  if p in ('dota','dota2'): return ('Esports','Dota 2')
  if p=='nfl': return ('American football','NFL')
@@ -127,7 +127,18 @@ def classify_sport(event):
  if p in ('nba','wnba'): return ('Basketball',p.upper())
  if p=='mlb': return ('Baseball','MLB')
  if p=='nhl': return ('Hockey','NHL')
+ # UNL is UEFA Nations League; WSL/ENL are football competition slugs.
+ if p=='unl': return ('Football','UEFA Nations League')
+ if p=='wsl': return ('Football','WSL')
+ if p=='enl': return ('Football','ENL')
  if p in ('fif','mex','col1','bra2','clf','chi2','es2','ned2','mar1','canpl','el1'): return ('Football',p.upper())
+ # For legacy fills with an empty event slug, use the verified Polymarket
+ # settlement question only. Do not infer a sport from player/team names.
+ tennis_tournaments={'chengdu open':'ATP','hangzhou open':'ATP','san diego 2':'ATP','singapore open':'WTA','korea open':'WTA','porto':'WTA'}
+ for name,tour in tennis_tournaments.items():
+  if q.startswith(name+':'): return ('Tennis',tour)
+ # Explicit football wording in verified questions.
+ if q.startswith('will ') or ' vs. ' in q and any(x in q for x in ('o/u','exact score','end in a draw')): return ('Football','Other football')
  return ('Other','Unclassified')
 
 def fill_copy_dashboard():
@@ -135,11 +146,13 @@ def fill_copy_dashboard():
  sm={}
  for z in q("select t.market,t.token_id,s.settlement_price,s.settled_at from paper_trades t join settlements s on s.trade_id=t.id order by s.settled_at"): sm[(z['market'],z['token_id'])]=(float(z['settlement_price']),z['settled_at'])
  snaps={x['fill_id']:float(x['executable_price']) for x in q("select fill_id,executable_price from fill_price_snapshots where target_delay_seconds=0 and executable_price is not null")}
+ questions={(x['condition_id'].lower(),x['token_id']):x['question'] for x in q("select condition_id,token_id,max(question) question from settlement_audit group by condition_id,token_id")}
  rows=q("select id,leader,observed_at,trade_ts,event,outcome,market,token_id,leader_price,leader_usdc from raw_fills where side='BUY' order by trade_ts,id")
  leaders={}
  for x in rows:
   L=x['leader']; ld=leaders.setdefault(L,{'leader':L,'last_seen_ts':0,'fills':0,'settled_fills':0,'open_fills':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0,'sports':{},'equity':[],'running':0.0,'exec3':{'fills':0,'settled':0,'copied':0.0,'pnl':0.0}})
-  sport,league=classify_sport(x['event']); d=ld['sports'].setdefault((sport,league),{'sport':sport,'league':league,'fills':0,'closed':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0})
+  question=questions.get((x['market'].lower(),x['token_id']),'') if not x['event'] else ''
+  sport,league=classify_sport(x['event'],question); d=ld['sports'].setdefault((sport,league),{'sport':sport,'league':league,'fills':0,'closed':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0})
   usd=float(x['leader_usdc']); lp=float(x['leader_price']); ld['last_seen_ts']=max(ld['last_seen_ts'],x['trade_ts']); ld['fills']+=1;ld['leader_volume']+=usd;d['fills']+=1;d['leader_volume']+=usd
   z=sm.get((x['market'],x['token_id']))
   if z and z[1]>=x['observed_at'] and lp>0:
