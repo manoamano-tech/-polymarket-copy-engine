@@ -28,3 +28,18 @@ header{position:sticky;top:0;z-index:20;background:rgba(7,10,15,.82);backdrop-fi
 <footer class="site-footer"><div class="footer-grid"><div class="footer-brand"><a class="brand" href="/"><span class="mark"></span><span>Copy<b>Edge</b></span></a><p>Платформа для мониторинга трейдеров Polymarket, проверки правил копирования и построения собственной стратегии копитрейдинга.</p></div><div class="footer-col"><h4>Навигация</h4><a href="/traders-overview">Трейдеры</a><a href="/app/rules.html">Бэктестер</a><a href="#how">Как это работает</a><a href="/pricing">Тарифы</a><a href="/blog">Блог</a></div><div class="footer-col"><h4>Возможности</h4><a href="/features">Мониторинг сделок</a><a href="/features">PAPER-тестирование</a><a href="/features">Правила копирования</a><a href="/features">Аналитика результатов</a><a href="#faq">Частые вопросы</a></div><div class="footer-col"><h4>Документы</h4><a href="/privacy">Политика конфиденциальности</a><a href="/terms">Пользовательское соглашение</a><a href="/risk-disclosure">Раскрытие рисков</a><span class="soon">Поддержка — скоро</span></div></div><div class="footer-bottom"><span class="footer-risk">CopyEdge находится в стадии разработки и тестирования. PAPER-результаты не являются результатами реальной торговли и не гарантируют будущую доходность.</span><span>© 2026 CopyEdge</span></div></footer></div></main>
 <script>const fmt=n=>Number(n||0).toLocaleString('ru-RU');fetch('/api/dashboard',{cache:'no-store'}).then(r=>r.json()).then(d=>{let ls=d.fill_copy?.leaders||[],rn=ls.find(x=>x.leader==='RN1')||ls[0]||{},leaders=ls.length,fills=ls.reduce((a,x)=>a+Number(x.fills||0),0),settled=ls.reduce((a,x)=>a+Number(x.settled_fills||0),0),markets=ls.reduce((a,x)=>a+Number(x.markets||0),0),roi=Number(rn.roi||0),vals={leaders,fills,settled,markets,roi:(roi>=0?'+':'')+roi.toFixed(2)+'%'};for(const [k,v] of Object.entries(vals))document.querySelectorAll('#'+k+',#'+k+'2').forEach(el=>el.textContent=typeof v==='number'?fmt(v):v)}).catch(()=>{});</script>
 </body></html>
+<style>
+/* Compact mobile account actions */
+@media(max-width:650px){
+  header nav{gap:10px}
+  header .nav-actions{gap:7px;margin-left:auto;align-items:center}
+  header .nav-actions .btn{min-height:38px;padding:8px 11px;border-radius:10px;font-size:11px;line-height:1.05;white-space:nowrap;box-shadow:none}
+  header #registerLink{background:transparent;color:#a9c7ff;border:1px solid #355078}
+  header .nav-actions>a[href="/app/"]{background:#78a8ff;color:#07101c;border-color:#78a8ff;padding-inline:12px}
+  header .brand{flex:0 1 auto;min-width:0}
+}
+@media(max-width:390px){
+  header .nav-actions .btn{padding:8px 9px;font-size:10.5px}
+  header .brand{font-size:19px}
+}
+</style>
