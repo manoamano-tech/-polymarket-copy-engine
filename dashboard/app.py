@@ -50,6 +50,19 @@ def history_positions(args):
   z=sm.get((x['market'],x['token_id'])); closed=bool(z and z[1]>=x['decided_at']); p=50*(z[0]/float(x['current_price'])-1) if closed else None
   out.append({'id':x['id'],'leader':x['leader'],'event':x['event'],'outcome':x['outcome'],'opened':time.strftime('%Y-%m-%d %H:%M:%S',time.gmtime(x['decided_at'])),'entry_price':round(float(x['current_price']),4),'build_usd':round(float(x['build_usdc']),2),'fill_count':x['fill_count'],'status':'SETTLED' if closed else 'OPEN','pnl':round(p,2) if p is not None else None})
  out.sort(key=lambda x:x['id'],reverse=True); return out[:1000]
+def leader_fill_performance():
+ sm={}
+ for z in q("select t.market,t.token_id,s.settlement_price,s.settled_at from paper_trades t join settlements s on s.trade_id=t.id order by s.settled_at"): sm[(z['market'],z['token_id'])]=(float(z['settlement_price']),z['settled_at'])
+ out={}
+ for x in q("select leader,market,token_id,side,trade_ts,leader_price,leader_usdc from raw_fills order by trade_ts,id"):
+  d=out.setdefault(x['leader'],{'buy_fills':0,'settled_fills':0,'settled_volume':0.0,'pnl':0.0,'wins':0})
+  if x['side']!='BUY': continue
+  d['buy_fills']+=1; z=sm.get((x['market'],x['token_id']))
+  if z and z[1]>=x['trade_ts'] and float(x['leader_price'])>0:
+   p=float(x['leader_usdc'])*(z[0]/float(x['leader_price'])-1); d['settled_fills']+=1; d['settled_volume']+=float(x['leader_usdc']); d['pnl']+=p; d['wins']+=int(p>0)
+ for d in out.values():
+  d['pnl']=round(d['pnl'],2); d['settled_volume']=round(d['settled_volume'],2); d['roi']=round(100*d['pnl']/d['settled_volume'],2) if d['settled_volume'] else 0; d['winrate']=round(100*d['wins']/d['settled_fills'],1) if d['settled_fills'] else 0
+ return out
 def payload():
  counts={r['k']:r['n'] for r in q("select 'fills' k,count(*) n from raw_fills union all select 'builds',count(*) from paper_builds union all select 'trades',count(*) from paper_trades union all select 'settled',count(*) from settlements")}
  strategies=q("select t.strategy,count(*) trades,count(s.trade_id) settled,round(coalesce(sum(s.realized_pnl_usd),0),2) pnl,round(coalesce(sum(s.realized_pnl_usd)/nullif(sum(case when s.trade_id is not null then t.stake_usd else 0 end),0)*100,0),2) roi,round(100.0*sum(case when s.realized_pnl_usd>0 then 1 else 0 end)/nullif(count(s.trade_id),0),1) winrate from paper_trades t left join settlements s on s.trade_id=t.id group by t.strategy order by roi desc")
@@ -61,9 +74,9 @@ def payload():
  for x in equity: running+=float(x['trade_pnl_raw']); x['pnl']=round(running,2); del x['trade_pnl_raw']
  leader_stats=q("select t.leader,count(*) trades,count(s.trade_id) settled,round(coalesce(sum(s.realized_pnl_usd),0),2) pnl,round(coalesce(sum(s.realized_pnl_usd)/nullif(sum(case when s.trade_id is not null then t.stake_usd else 0 end),0)*100,0),2) roi from paper_trades t left join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' group by t.leader order by trades desc")
  trader_cards=q("select r.leader,count(*) fills,count(distinct r.market) markets,round(sum(r.leader_usdc),2) volume,round(avg(r.leader_usdc),2) avg_fill,datetime(max(r.observed_at),'unixepoch') last_seen,(select count(*) from paper_builds b where b.leader=r.leader) builds,(select round(avg(b.build_usdc),2) from paper_builds b where b.leader=r.leader) avg_build from raw_fills r group by r.leader order by fills desc")
- fwdmap={x['leader']:x for x in leader_stats}; hist=history_by_leader()
+ fwdmap={x['leader']:x for x in leader_stats}; hist=history_by_leader(); perf=leader_fill_performance()
  for x in trader_cards:
-  x.update(fwdmap.get(x['leader'],{'trades':0,'settled':0,'pnl':0,'roi':0})); x['history']=hist.get(x['leader'],{'positions':0,'settled':0,'open':0,'pnl':0,'roi':0,'winrate':0})
+  x.update(fwdmap.get(x['leader'],{'trades':0,'settled':0,'pnl':0,'roi':0})); x['history']=hist.get(x['leader'],{'positions':0,'settled':0,'open':0,'pnl':0,'roi':0,'winrate':0}); x['leader_performance']=perf.get(x['leader'],{'buy_fills':0,'settled_fills':0,'settled_volume':0,'pnl':0,'roi':0,'winrate':0})
  maxdd=0; peak=0
  for x in equity:
   peak=max(peak,x['pnl']); maxdd=max(maxdd,peak-x['pnl'])
