@@ -132,13 +132,30 @@ def classify_sport(event,question=''):
  if p=='wsl': return ('Football','WSL')
  if p=='enl': return ('Football','ENL')
  if p in ('fif','mex','col1','bra2','clf','chi2','es2','ned2','mar1','canpl','el1'): return ('Football',p.upper())
- # For legacy fills with an empty event slug, use the verified Polymarket
- # settlement question only. Do not infer a sport from player/team names.
- tennis_tournaments={'chengdu open':'ATP','hangzhou open':'ATP','san diego 2':'ATP','singapore open':'WTA','korea open':'WTA','porto':'WTA'}
- for name,tour in tennis_tournaments.items():
+ # For legacy fills with an empty event slug, use only explicit wording in
+ # verified Polymarket settlement questions. Do not infer from outcome names.
+ tennis_tours={
+  'chengdu open':'ATP','hangzhou open':'ATP','san diego 2':'ATP',
+  'singapore open':'WTA','korea open':'WTA','porto':'WTA',
+  'tolentino':'Tennis / ITF','ankara':'Tennis / ITF',
+  'buenos aires 2':'Tennis / Challenger','st. tropez':'Tennis / Challenger',
+  'plovdiv 4':'Tennis / ITF'}
+ for name,tour in tennis_tours.items():
   if q.startswith(name+':'): return ('Tennis',tour)
- # Explicit football wording in verified questions.
- if q.startswith('will ') or ' vs. ' in q and any(x in q for x in ('o/u','exact score','end in a draw')): return ('Football','Other football')
+ # Explicit American-football matchups / spread markets seen in verified metadata.
+ football_teams=('falcons','packers','army','temple','clemson','california','liberty','coastal carolina','navy','uab','northwestern','indiana')
+ if any(t in q for t in football_teams) and (' vs. ' in q or q.startswith('spread:')):
+  return ('American football','Other / legacy')
+ # Explicit basketball matchup in verified metadata.
+ if q.startswith('golden state valkyries vs. los angeles sparks') or q.startswith('toronto tempo vs. connecticut sun'):
+  return ('Basketball','WNBA')
+ # CS2 derivative markets whose question explicitly identifies map terminology.
+ if q.startswith('map handicap:'): return ('Esports','CS2')
+ # Explicit football wording in verified questions. Exact score, draw, BTTS and
+ # soccer spreads are grouped as football only when the question itself says so.
+ if q.startswith('will ') or (' vs. ' in q and any(x in q for x in ('o/u','exact score','end in a draw','both teams to score','draw at halftime','leading at halftime'))):
+  return ('Football','Other football')
+ if q.startswith('exact score:'): return ('Football','Other football')
  return ('Other','Unclassified')
 
 def fill_copy_dashboard():
