@@ -60,7 +60,7 @@ def payload():
  running=0
  for x in equity: running+=float(x['trade_pnl_raw']); x['pnl']=round(running,2); del x['trade_pnl_raw']
  leader_stats=q("select t.leader,count(*) trades,count(s.trade_id) settled,round(coalesce(sum(s.realized_pnl_usd),0),2) pnl,round(coalesce(sum(s.realized_pnl_usd)/nullif(sum(case when s.trade_id is not null then t.stake_usd else 0 end),0)*100,0),2) roi from paper_trades t left join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' group by t.leader order by trades desc")
- trader_cards=q("select r.leader,count(*) fills,round(sum(r.leader_usdc),0) volume,datetime(max(r.observed_at),'unixepoch') last_seen,(select count(*) from paper_builds b where b.leader=r.leader) builds,(select round(avg(b.build_usdc),2) from paper_builds b where b.leader=r.leader) avg_build from raw_fills r group by r.leader order by fills desc")
+ trader_cards=q("select r.leader,count(*) fills,count(distinct r.market) markets,round(sum(r.leader_usdc),2) volume,round(avg(r.leader_usdc),2) avg_fill,datetime(max(r.observed_at),'unixepoch') last_seen,(select count(*) from paper_builds b where b.leader=r.leader) builds,(select round(avg(b.build_usdc),2) from paper_builds b where b.leader=r.leader) avg_build from raw_fills r group by r.leader order by fills desc")
  fwdmap={x['leader']:x for x in leader_stats}; hist=history_by_leader()
  for x in trader_cards:
   x.update(fwdmap.get(x['leader'],{'trades':0,'settled':0,'pnl':0,'roi':0})); x['history']=hist.get(x['leader'],{'positions':0,'settled':0,'open':0,'pnl':0,'roi':0,'winrate':0})
