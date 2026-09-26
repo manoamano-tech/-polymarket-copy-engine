@@ -130,31 +130,37 @@ def classify_sport(event):
  if p in ('fif','mex','col1','bra2','clf','chi2','es2','ned2','mar1','canpl','el1'): return ('Football',p.upper())
  return ('Other','Unclassified')
 
-def rn1_fill_dashboard():
- # Baseline: every RN1 BUY fill, proportional sizing (1% of leader fill). No size/fill-count filters.
+def fill_copy_dashboard():
+ # All observed BUY fills, proportional sizing. Settlement-backed results only; no deduplication.
  sm={}
  for z in q("select t.market,t.token_id,s.settlement_price,s.settled_at from paper_trades t join settlements s on s.trade_id=t.id order by s.settled_at"): sm[(z['market'],z['token_id'])]=(float(z['settlement_price']),z['settled_at'])
  snaps={x['fill_id']:float(x['executable_price']) for x in q("select fill_id,executable_price from fill_price_snapshots where target_delay_seconds=0 and executable_price is not null")}
- rows=q("select id,observed_at,trade_ts,event,outcome,market,token_id,leader_price,leader_usdc from raw_fills where leader='RN1' and side='BUY' order by trade_ts,id")
- sports={}; total={'fills':len(rows),'closed':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0}; executable={'fills':0,'closed':0,'copied':0.0,'pnl':0.0}; equity=[]; running=0.0
+ rows=q("select id,leader,observed_at,trade_ts,event,outcome,market,token_id,leader_price,leader_usdc from raw_fills where side='BUY' order by trade_ts,id")
+ leaders={}
  for x in rows:
-  sport,league=classify_sport(x['event']); key=(sport,league); d=sports.setdefault(key,{'sport':sport,'league':league,'fills':0,'closed':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0})
-  usd=float(x['leader_usdc']); lp=float(x['leader_price']); d['fills']+=1; d['leader_volume']+=usd; total['leader_volume']+=usd
+  L=x['leader']; ld=leaders.setdefault(L,{'leader':L,'fills':0,'settled_fills':0,'open_fills':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0,'sports':{},'equity':[],'running':0.0,'exec3':{'fills':0,'settled':0,'copied':0.0,'pnl':0.0}})
+  sport,league=classify_sport(x['event']); d=ld['sports'].setdefault((sport,league),{'sport':sport,'league':league,'fills':0,'closed':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0})
+  usd=float(x['leader_usdc']); lp=float(x['leader_price']); ld['fills']+=1;ld['leader_volume']+=usd;d['fills']+=1;d['leader_volume']+=usd
   z=sm.get((x['market'],x['token_id']))
   if z and z[1]>=x['observed_at'] and lp>0:
-   stake=.01*usd; pnl=stake*(z[0]/lp-1); d['closed']+=1; d['copied']+=stake; d['pnl']+=pnl; d['wins']+=int(pnl>0); total['closed']+=1; total['copied']+=stake; total['pnl']+=pnl; running+=pnl; equity.append({'ts':x['trade_ts'],'pnl':round(running,2),'trade_pnl':round(pnl,2),'event':x['event'],'sport':sport,'league':league})
+   stake=.01*usd;pnl=stake*(z[0]/lp-1);ld['settled_fills']+=1;ld['copied']+=stake;ld['pnl']+=pnl;ld['wins']+=int(pnl>0);d['closed']+=1;d['copied']+=stake;d['pnl']+=pnl;d['wins']+=int(pnl>0);ld['running']+=pnl;ld['equity'].append({'ts':x['trade_ts'],'pnl':round(ld['running'],2),'trade_pnl':round(pnl,2),'event':x['event'],'sport':sport,'league':league})
+  else: ld['open_fills']+=1
   ep=snaps.get(x['id'])
-  # Max 3 percentage-point adverse move vs RN1; price improvement is allowed.
   if ep is not None and ep-lp<=.03:
-   executable['fills']+=1
+   ld['exec3']['fills']+=1
    if z and z[1]>=x['observed_at'] and ep>0:
-    stake=.01*usd; pnl=stake*(z[0]/ep-1); executable['closed']+=1; executable['copied']+=stake; executable['pnl']+=pnl
+    stake=.01*usd;pnl=stake*(z[0]/ep-1);ld['exec3']['settled']+=1;ld['exec3']['copied']+=stake;ld['exec3']['pnl']+=pnl
  def finish(d):
-  d['leader_volume']=round(d.get('leader_volume',0),2); d['copied']=round(d.get('copied',0),2); d['pnl']=round(d.get('pnl',0),2); d['roi']=round(100*d['pnl']/d['copied'],2) if d['copied'] else 0
-  if 'wins' in d: d['winrate']=round(100*d['wins']/d['closed'],1) if d['closed'] else 0
-  return d
- finish(total); finish(executable); out=[finish(x) for x in sports.values()]; out.sort(key=lambda x:(x['sport'],x['league']))
- return {'total':total,'executable_3pct':executable,'sports':out,'equity':equity,'scale_pct':1,'slippage_limit_pct':3}
+  for k in ('leader_volume','copied','pnl'): d[k]=round(d.get(k,0),2)
+  d['roi']=round(100*d['pnl']/d['copied'],2) if d.get('copied') else 0
+  if 'wins' in d:d['winrate']=round(100*d['wins']/d['settled_fills'],1) if d.get('settled_fills') else 0
+ for ld in leaders.values():
+  finish(ld); ex=ld['exec3'];ex['copied']=round(ex['copied'],2);ex['pnl']=round(ex['pnl'],2);ex['roi']=round(100*ex['pnl']/ex['copied'],2) if ex['copied'] else 0
+  ss=[]
+  for d in ld['sports'].values():
+   d['leader_volume']=round(d['leader_volume'],2);d['copied']=round(d['copied'],2);d['pnl']=round(d['pnl'],2);d['roi']=round(100*d['pnl']/d['copied'],2) if d['copied'] else 0;d['winrate']=round(100*d['wins']/d['closed'],1) if d['closed'] else 0;ss.append(d)
+  ss.sort(key=lambda x:(x['sport'],x['league']));ld['sports']=ss;ld.pop('running',None)
+ return {'leaders':sorted(leaders.values(),key=lambda x:-x['fills']),'scale_pct':1,'slippage_limit_pct':3}
 
 def payload():
  counts={r['k']:r['n'] for r in q("select 'fills' k,count(*) n from raw_fills union all select 'builds',count(*) from paper_builds union all select 'trades',count(*) from paper_trades union all select 'settled',count(*) from settlements")}
@@ -179,7 +185,7 @@ def payload():
  reasons=q("select d.reason,count(*) n from strategy_decisions d join paper_builds b on b.id=d.build_id where d.strategy='S500_SLIP1c_F2_9' and b.leader='RN1' and d.action='SKIP' group by d.reason order by n desc")
  trade_details=q("select t.id,t.build_id,t.leader,t.event,t.outcome,t.side,round(b.build_usdc,2) build_usd,b.fill_count,round(b.leader_vwap,4) leader_price,round(t.entry_price,4) our_price,round(t.stake_usd,2) stake_usd,CASE WHEN s.trade_id IS NULL THEN 'OPEN' ELSE 'SETTLED' END status,datetime(t.opened_at,'unixepoch') opened,round(b.slippage*100,2) slippage_pct,round(b.build_duration_seconds,1) build_seconds,round(b.avg_latency_seconds,1) latency_seconds,b.reason,round(s.realized_pnl_usd,2) pnl,datetime(s.settled_at,'unixepoch') settled from paper_trades t left join paper_builds b on b.id=t.build_id left join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' order by t.id desc limit 250")
  decisions=q("select datetime(b.decided_at,'unixepoch') decided,b.leader,b.event,b.outcome,round(b.build_usdc,2) build_usd,b.fill_count,round(b.leader_vwap,3) leader_price,round(b.current_price,3) our_price,round(100*b.slippage,2) slip,d.action,d.reason from strategy_decisions d join paper_builds b on b.id=d.build_id where d.strategy='S500_SLIP1c_F2_9' order by d.id desc limit 40")
- return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity,'decisions':decisions,'rn1':rn,'rn1_reasons':reasons,'leader_stats':leader_stats,'trader_cards':trader_cards,'trade_details':trade_details,'size_research':size_research(),'rn1_fill':rn1_fill_dashboard()}
+ return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity,'decisions':decisions,'rn1':rn,'rn1_reasons':reasons,'leader_stats':leader_stats,'trader_cards':trader_cards,'trade_details':trade_details,'size_research':size_research(),'fill_copy':fill_copy_dashboard()}
 class H(BaseHTTPRequestHandler):
  def do_GET(self):
   u=urlparse(self.path)
