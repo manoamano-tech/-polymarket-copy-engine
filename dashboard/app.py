@@ -90,6 +90,28 @@ def leader_fill_performance():
   d['roi']=round(100*d['pnl']/d['settled_volume'],2) if d['settled_volume'] else 0; d['winrate']=round(100*d['wins']/d['settled_fills'],1) if d['settled_fills'] else 0
  return out
 
+
+def size_research():
+ # Diagnostic only: fixed non-overlapping build-size buckets, no parameter search.
+ buckets=[(0,500,'<$500'),(500,1000,'$500–999'),(1000,2000,'$1,000–1,999'),(2000,5000,'$2,000–4,999'),(5000,10000,'$5,000–9,999'),(10000,None,'$10,000+')]
+ out=[]
+ for lo,hi,label in buckets:
+  # Keep execution assumption fixed at <=1%; isolate size instead of tuning both dimensions.
+  sql="select id,decided_at,leader,market,event,token_id,current_price,build_usdc from paper_builds where side='BUY' and build_usdc>=? and current_price>0 and slippage is not null and slippage<=.01"; a=[lo]
+  if hi is not None: sql+=' and build_usdc<?'; a.append(hi)
+  sql+=' order by decided_at,id'; first={}
+  for x in q(sql,a): first.setdefault((x['leader'],x['market'],x['token_id']),x)
+  sm={}
+  for z in q("select t.market,t.token_id,s.settlement_price,s.settled_at from paper_trades t join settlements s on s.trade_id=t.id order by s.settled_at"): sm[(z['market'],z['token_id'])]=(float(z['settlement_price']),z['settled_at'])
+  vals=[]; events=set()
+  for x in first.values():
+   z=sm.get((x['market'],x['token_id']))
+   if z and z[1]>=x['decided_at']:
+    vals.append(50*(z[0]/float(x['current_price'])-1)); events.add(x['event'] or ('market:'+x['market']))
+  pnl=sum(vals); invested=len(vals)*50
+  out.append({'label':label,'positions':len(first),'settled':len(vals),'events':len(events),'pnl':round(pnl,2),'roi':round(100*pnl/invested,2) if invested else 0,'winrate':round(100*sum(v>0 for v in vals)/len(vals),1) if vals else 0})
+ return out
+
 def payload():
  counts={r['k']:r['n'] for r in q("select 'fills' k,count(*) n from raw_fills union all select 'builds',count(*) from paper_builds union all select 'trades',count(*) from paper_trades union all select 'settled',count(*) from settlements")}
  strategies=q("select t.strategy,count(*) trades,count(s.trade_id) settled,round(coalesce(sum(s.realized_pnl_usd),0),2) pnl,round(coalesce(sum(s.realized_pnl_usd)/nullif(sum(case when s.trade_id is not null then t.stake_usd else 0 end),0)*100,0),2) roi,round(100.0*sum(case when s.realized_pnl_usd>0 then 1 else 0 end)/nullif(count(s.trade_id),0),1) winrate from paper_trades t left join settlements s on s.trade_id=t.id group by t.strategy order by roi desc")
@@ -113,7 +135,7 @@ def payload():
  reasons=q("select d.reason,count(*) n from strategy_decisions d join paper_builds b on b.id=d.build_id where d.strategy='S500_SLIP1c_F2_9' and b.leader='RN1' and d.action='SKIP' group by d.reason order by n desc")
  trade_details=q("select t.id,t.build_id,t.leader,t.event,t.outcome,t.side,round(b.build_usdc,2) build_usd,b.fill_count,round(b.leader_vwap,4) leader_price,round(t.entry_price,4) our_price,round(t.stake_usd,2) stake_usd,CASE WHEN s.trade_id IS NULL THEN 'OPEN' ELSE 'SETTLED' END status,datetime(t.opened_at,'unixepoch') opened,round(b.slippage*100,2) slippage_pct,round(b.build_duration_seconds,1) build_seconds,round(b.avg_latency_seconds,1) latency_seconds,b.reason,round(s.realized_pnl_usd,2) pnl,datetime(s.settled_at,'unixepoch') settled from paper_trades t left join paper_builds b on b.id=t.build_id left join settlements s on s.trade_id=t.id where t.strategy='S500_SLIP1c_F2_9' order by t.id desc limit 250")
  decisions=q("select datetime(b.decided_at,'unixepoch') decided,b.leader,b.event,b.outcome,round(b.build_usdc,2) build_usd,b.fill_count,round(b.leader_vwap,3) leader_price,round(b.current_price,3) our_price,round(100*b.slippage,2) slip,d.action,d.reason from strategy_decisions d join paper_builds b on b.id=d.build_id where d.strategy='S500_SLIP1c_F2_9' order by d.id desc limit 40")
- return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity,'decisions':decisions,'rn1':rn,'rn1_reasons':reasons,'leader_stats':leader_stats,'trader_cards':trader_cards,'trade_details':trade_details}
+ return {'ts':int(time.time()),'counts':counts,'forward':fwd,'strategies':strategies,'latest':latest,'leaders':leaders,'equity':equity,'decisions':decisions,'rn1':rn,'rn1_reasons':reasons,'leader_stats':leader_stats,'trader_cards':trader_cards,'trade_details':trade_details,'size_research':size_research()}
 class H(BaseHTTPRequestHandler):
  def do_GET(self):
   u=urlparse(self.path)
