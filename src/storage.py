@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, o
 CREATE TABLE IF NOT EXISTS paper_marks (id INTEGER PRIMARY KEY AUTOINCREMENT, marked_at REAL NOT NULL, trade_id INTEGER NOT NULL, mark_price REAL NOT NULL, value_usd REAL NOT NULL, pnl_usd REAL NOT NULL, pnl_pct REAL NOT NULL, FOREIGN KEY(trade_id) REFERENCES paper_trades(id));
 CREATE TABLE IF NOT EXISTS settlements (trade_id INTEGER PRIMARY KEY, settled_at REAL NOT NULL, settlement_price REAL NOT NULL, value_usd REAL NOT NULL, realized_pnl_usd REAL NOT NULL, realized_pnl_pct REAL NOT NULL, FOREIGN KEY(trade_id) REFERENCES paper_trades(id));
 CREATE TABLE IF NOT EXISTS settlement_audit (trade_id INTEGER PRIMARY KEY, condition_id TEXT NOT NULL, token_id TEXT NOT NULL, token_outcome TEXT, winning_outcome TEXT, question TEXT, verified_at REAL NOT NULL, settlement_price REAL NOT NULL, FOREIGN KEY(trade_id) REFERENCES paper_trades(id));
+CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, created_at REAL NOT NULL, expires_at REAL NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id));
 CREATE TABLE IF NOT EXISTS copy_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, leader TEXT NOT NULL, stake_usd REAL NOT NULL DEFAULT 1.0, sport_filter TEXT NOT NULL DEFAULT '*', league_filter TEXT NOT NULL DEFAULT '*', max_slippage REAL NOT NULL DEFAULT 0.03, enabled INTEGER NOT NULL DEFAULT 0, execution_mode TEXT NOT NULL DEFAULT 'DRY_RUN', created_at REAL NOT NULL, updated_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS copy_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id INTEGER NOT NULL, fill_id INTEGER NOT NULL, decided_at REAL NOT NULL, leader TEXT NOT NULL, token_id TEXT NOT NULL, sport TEXT, league TEXT, leader_price REAL NOT NULL, requested_usd REAL NOT NULL, executable_price REAL, slippage REAL, status TEXT NOT NULL, reason TEXT, order_id TEXT, filled_usd REAL, fill_price REAL, FOREIGN KEY(profile_id) REFERENCES copy_profiles(id), FOREIGN KEY(fill_id) REFERENCES raw_fills(id), UNIQUE(profile_id,fill_id));
 CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at REAL NOT NULL);
@@ -23,7 +25,7 @@ class Store:
         cols={r[1] for r in self.db.execute("PRAGMA table_info("+table+")")}
         if column not in cols: self.db.execute("ALTER TABLE "+table+" ADD COLUMN "+column+" "+decl)
     def _migrate(self):
-        self._ensure_column("raw_fills","sport","TEXT"); self._ensure_column("raw_fills","league","TEXT")
+        self._ensure_column("raw_fills","sport","TEXT"); self._ensure_column("raw_fills","league","TEXT"); self._ensure_column("copy_profiles","user_id","INTEGER")
         name="reset_legacy_settlements_v061"
         if not self.db.execute("SELECT 1 FROM schema_migrations WHERE name=?",(name,)).fetchone():
             old=self.db.execute("SELECT COUNT(*) FROM settlements").fetchone()[0]; self.db.execute("DELETE FROM settlements"); self.db.execute("DELETE FROM settlement_audit"); self.db.execute("INSERT INTO schema_migrations(name,applied_at) VALUES(?,strftime('%s','now'))",(name,)); print("[MIGRATION] cleared {} legacy unverified settlements for safe recalculation".format(old),flush=True)

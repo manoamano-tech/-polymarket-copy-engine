@@ -1,4 +1,4 @@
-import json,sqlite3,time
+import json,sqlite3,time,hashlib,secrets,re,hmac
 from urllib.parse import urlparse,parse_qs
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 DB='/app/data/paper.db'
@@ -223,23 +223,92 @@ def payload():
  for x in fc['leaders']:
   cards.append({'leader':x['leader'],'fills':x['fills'],'markets':0,'volume':x['leader_volume'],'avg_fill':round(x['leader_volume']/x['fills'],2) if x['fills'] else 0,'last_seen':time.strftime('%Y-%m-%d %H:%M:%S',time.gmtime(x['last_seen_ts'])),'trades':0,'settled':0,'pnl':x['pnl'],'roi':x['roi'],'history':{},'leader_performance':{'buy_fills':x['fills'],'sell_fills':0,'settled_fills':x['settled_fills'],'settled_volume':x['copied']*100,'pnl':x['pnl']*100,'wallet_observed_pnl':x['pnl']*100,'realized_pnl':x['pnl']*100,'unrealized_pnl':None,'open_positions':x['open_fills'],'priced_open_positions':0,'open_value':None,'roi':x['roi']}})
  return {'ts':int(time.time()),'trader_cards':cards,'equity':[],'fill_copy':fc}
-def account_payload():
- profiles=[dict(x) for x in q("select id,name,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode,created_at,updated_at from copy_profiles order by id")]
- attempts=[dict(x) for x in q("select id,profile_id,fill_id,decided_at,leader,sport,league,leader_price,requested_usd,executable_price,slippage,status,reason,filled_usd,fill_price from copy_attempts order by id desc limit 100")]
+def db_exec(sql,args=()):
+ c=sqlite3.connect(DB,timeout=5)
+ try:
+  cur=c.execute(sql,args); c.commit(); return cur.lastrowid
+ finally:c.close()
+def auth_schema():
+ c=sqlite3.connect(DB,timeout=5)
+ try:
+  c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT NOT NULL,created_at REAL NOT NULL)")
+  c.execute("CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at REAL NOT NULL,expires_at REAL NOT NULL)")
+  cols={r[1] for r in c.execute('pragma table_info(copy_profiles)')}
+  if 'user_id' not in cols:c.execute('alter table copy_profiles add column user_id INTEGER')
+  c.commit()
+ finally:c.close()
+def hash_password(password,salt=None):
+ salt=salt or secrets.token_bytes(16); dk=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,310000)
+ return salt.hex()+'$'+dk.hex()
+def verify_password(password,stored):
+ try:
+  sh,dh=stored.split('$',1); return hmac.compare_digest(hash_password(password,bytes.fromhex(sh)).split('$')[1],dh)
+ except:return False
+def token_hash(t):return hashlib.sha256(t.encode()).hexdigest()
+def current_user(cookie):
+ token=''
+ for part in (cookie or '').split(';'):
+  if part.strip().startswith('ce_session='):token=part.strip().split('=',1)[1]
+ if not token:return None
+ rows=q("select u.id,u.email from user_sessions s join users u on u.id=s.user_id where s.token_hash=? and s.expires_at>?",(token_hash(token),time.time()))
+ return rows[0] if rows else None
+def account_payload(uid):
+ profiles=q("select id,name,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode,created_at,updated_at from copy_profiles where user_id=? order by id",(uid,))
+ attempts=[]
+ if profiles:
+  ids=[x['id'] for x in profiles]; marks=','.join('?'*len(ids)); attempts=q("select id,profile_id,fill_id,decided_at,leader,sport,league,leader_price,requested_usd,executable_price,slippage,status,reason,filled_usd,fill_price from copy_attempts where profile_id in ("+marks+") order by id desc limit 100",ids)
  return {'wallet_connected':False,'live_execution':False,'profiles':profiles,'attempts':attempts}
+auth_schema()
+
 class H(BaseHTTPRequestHandler):
+ def send_json(self,code,data,cookie=None):
+  b=json.dumps(data).encode();self.send_response(code);self.send_header('Content-Type','application/json');self.send_header('Cache-Control','no-store')
+  if cookie:self.send_header('Set-Cookie',cookie)
+  self.end_headers();self.wfile.write(b)
+ def body_json(self):
+  n=min(int(self.headers.get('Content-Length','0') or 0),16384);return json.loads(self.rfile.read(n) or b'{}')
+ def do_POST(self):
+  try:
+   d=self.body_json();email=(d.get('email') or '').strip().lower();pw=d.get('password') or ''
+   if self.path in ('/api/register','/api/login'):
+    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email):return self.send_json(400,{'error':'Введите корректный email'})
+    if len(pw)<8:return self.send_json(400,{'error':'Пароль — минимум 8 символов'})
+   if self.path=='/api/register':
+    try:uid=db_exec('insert into users(email,password_hash,created_at) values(?,?,?)',(email,hash_password(pw),time.time()))
+    except sqlite3.IntegrityError:return self.send_json(409,{'error':'Такой email уже зарегистрирован'})
+    now=time.time();db_exec("insert into copy_profiles(user_id,name,leader,stake_usd,sport_filter,league_filter,max_slippage,enabled,execution_mode,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)",(uid,'RN1 · $2 all sports','RN1',2.0,'*','*',.03,1,'DRY_RUN',now,now))
+   elif self.path=='/api/login':
+    z=q('select id,password_hash from users where email=?',(email,));
+    if not z or not verify_password(pw,z[0]['password_hash']):return self.send_json(401,{'error':'Неверный email или пароль'})
+    uid=z[0]['id']
+   elif self.path=='/api/logout':
+    u=current_user(self.headers.get('Cookie'));
+    if u:
+     # delete all current-user sessions: simple first version
+     db_exec('delete from user_sessions where user_id=?',(u['id'],))
+    return self.send_json(200,{'ok':True},'ce_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax')
+   else:return self.send_json(404,{'error':'not found'})
+   token=secrets.token_urlsafe(32);now=time.time();db_exec('insert into user_sessions(user_id,token_hash,created_at,expires_at) values(?,?,?,?)',(uid,token_hash(token),now,now+30*86400))
+   return self.send_json(200,{'ok':True},f'ce_session={token}; Path=/; Max-Age={30*86400}; HttpOnly; Secure; SameSite=Lax')
+  except Exception as e:
+   print('[AUTH_ERROR]',repr(e),flush=True);return self.send_json(500,{'error':'Ошибка сервера'})
  def do_GET(self):
   u=urlparse(self.path)
-  if u.path not in ('/api/dashboard','/api/backtest','/api/history','/api/positions','/api/account'): self.send_response(404); self.end_headers(); return
+  if u.path=='/api/me':
+   me=current_user(self.headers.get('Cookie'));return self.send_json(200 if me else 401,{'user':me} if me else {'error':'unauthorized'})
+  if u.path not in ('/api/dashboard','/api/backtest','/api/history','/api/positions','/api/account'):return self.send_json(404,{'error':'not found'})
   try:
    z={k:v[-1] for k,v in parse_qs(u.query).items()}
-   if u.path=='/api/dashboard': data=payload()
-   elif u.path=='/api/account': data=account_payload()
-   elif u.path=='/api/history': data=history_positions(z)
-   elif u.path=='/api/positions': data=observed_positions(z.get('leader'),z.get('status','all'),z.get('limit',500))
+   if u.path=='/api/dashboard':data=payload()
+   elif u.path=='/api/account':
+    me=current_user(self.headers.get('Cookie'))
+    if not me:return self.send_json(401,{'error':'unauthorized'})
+    data=account_payload(me['id']);data['user']=me
+   elif u.path=='/api/history':data=history_positions(z)
+   elif u.path=='/api/positions':data=observed_positions(z.get('leader'),z.get('status','all'),z.get('limit',500))
    else:
-    z['leader']=None if z.get('leader') in (None,'','all') else z.get('leader'); data=backtest(z)
-   b=json.dumps(data).encode(); self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Cache-Control','no-store'); self.end_headers(); self.wfile.write(b)
-  except Exception as e:self.send_response(500);self.end_headers();self.wfile.write(str(e).encode())
+    z['leader']=None if z.get('leader') in (None,'','all') else z.get('leader');data=backtest(z)
+   return self.send_json(200,data)
+  except Exception:return self.send_json(500,{'error':'Ошибка сервера'})
  def log_message(self,*a):pass
 ThreadingHTTPServer(('0.0.0.0',8765),H).serve_forever()
