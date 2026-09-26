@@ -176,7 +176,7 @@ def fill_copy_dashboard():
    stake=.01*usd;pnl=stake*(z[0]/lp-1);ld['settled_fills']+=1;ld['copied']+=stake;ld['pnl']+=pnl;ld['wins']+=int(pnl>0);d['closed']+=1;d['copied']+=stake;d['pnl']+=pnl;d['wins']+=int(pnl>0);ld['running']+=pnl;ld['equity'].append({'ts':x['trade_ts'],'pnl':round(ld['running'],2),'trade_pnl':round(pnl,2),'event':x['event'],'sport':sport,'league':league})
   else: ld['open_fills']+=1
   ep=snaps.get(x['id'])
-  if ep is not None and ep-lp<=.03:
+  if ep is not None and lp>0 and (ep-lp)/lp<=.03:
    ld['exec3']['fills']+=1
    if z and z[1]>=x['observed_at'] and ep>0:
     stake=.01*usd;pnl=stake*(z[0]/ep-1);ld['exec3']['settled']+=1;ld['exec3']['copied']+=stake;ld['exec3']['pnl']+=pnl
