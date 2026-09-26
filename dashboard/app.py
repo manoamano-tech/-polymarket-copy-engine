@@ -232,7 +232,7 @@ def auth_schema():
  c=sqlite3.connect(DB,timeout=5)
  try:
   c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT NOT NULL,created_at REAL NOT NULL)")
-  c.execute("CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at REAL NOT NULL,expires_at REAL NOT NULL)")
+  c.execute("CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at REAL NOT NULL,expires_at REAL NOT NULL)");c.execute("CREATE TABLE IF NOT EXISTS polymarket_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL UNIQUE,wallet_address TEXT NOT NULL,wallet_type TEXT NOT NULL DEFAULT 'DEPOSIT_WALLET',connection_status TEXT NOT NULL DEFAULT 'READ_ONLY',connected_at REAL NOT NULL,updated_at REAL NOT NULL)")
   cols={r[1] for r in c.execute('pragma table_info(copy_profiles)')}
   if 'user_id' not in cols:c.execute('alter table copy_profiles add column user_id INTEGER')
   c.commit()
@@ -269,7 +269,7 @@ def account_payload(uid):
  for z in settled:
   pnl=float(z['requested_usd'])*(float(z['settlement_price'])/float(z['executable_price'])-1);stats['settled']+=1;stats['invested']+=float(z['requested_usd']);stats['pnl']+=pnl
  stats['pnl']=round(stats['pnl'],2);stats['invested']=round(stats['invested'],2);stats['roi']=round(stats['pnl']/stats['invested']*100,2) if stats['invested'] else None
- return {'wallet_connected':False,'live_execution':False,'profiles':profiles,'attempts':attempts,'leaders':leaders,'sports':sports,'leagues':leagues,'stats':stats}
+ pm=q("select wallet_address,wallet_type,connection_status,connected_at from polymarket_accounts where user_id=?",(uid,));return {'wallet_connected':bool(pm),'live_execution':bool(pm and pm[0]['connection_status']=='TRADING'),'polymarket_account':pm[0] if pm else None,'profiles':profiles,'attempts':attempts,'leaders':leaders,'sports':sports,'leagues':leagues,'stats':stats}
 auth_schema()
 
 class H(BaseHTTPRequestHandler):
@@ -293,6 +293,19 @@ class H(BaseHTTPRequestHandler):
     z=q('select id,password_hash from users where email=?',(email,));
     if not z or not verify_password(pw,z[0]['password_hash']):return self.send_json(401,{'error':'Неверный email или пароль'})
     uid=z[0]['id']
+   elif self.path=='/api/polymarket/connect':
+    u=current_user(self.headers.get('Cookie'))
+    if not u:return self.send_json(401,{'error':'unauthorized'})
+    wallet=(d.get('wallet_address') or '').strip().lower()
+    if not re.fullmatch(r'0x[a-f0-9]{40}',wallet):return self.send_json(400,{'error':'Введите адрес Polymarket-кошелька 0x…'})
+    now=time.time();old=q('select id from polymarket_accounts where user_id=?',(u['id'],))
+    if old:db_exec("update polymarket_accounts set wallet_address=?,wallet_type='DEPOSIT_WALLET',connection_status='READ_ONLY',updated_at=? where user_id=?",(wallet,now,u['id']))
+    else:db_exec("insert into polymarket_accounts(user_id,wallet_address,wallet_type,connection_status,connected_at,updated_at) values(?,?,'DEPOSIT_WALLET','READ_ONLY',?,?)",(u['id'],wallet,now,now))
+    return self.send_json(200,{'ok':True,'wallet_address':wallet,'wallet_type':'DEPOSIT_WALLET','connection_status':'READ_ONLY'})
+   elif self.path=='/api/polymarket/disconnect':
+    u=current_user(self.headers.get('Cookie'))
+    if not u:return self.send_json(401,{'error':'unauthorized'})
+    db_exec('delete from polymarket_accounts where user_id=?',(u['id'],));return self.send_json(200,{'ok':True})
    elif self.path=='/api/profile':
     u=current_user(self.headers.get('Cookie'))
     if not u:return self.send_json(401,{'error':'unauthorized'})
