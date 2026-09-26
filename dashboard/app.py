@@ -92,24 +92,27 @@ def leader_fill_performance():
 
 
 def size_research():
- # Diagnostic only: fixed non-overlapping build-size buckets, no parameter search.
+ # Diagnostic only: fixed non-overlapping size buckets. Chronological halves test stability without tuning cutoffs.
  buckets=[(0,500,'<$500'),(500,1000,'$500–999'),(1000,2000,'$1,000–1,999'),(2000,5000,'$2,000–4,999'),(5000,10000,'$5,000–9,999'),(10000,None,'$10,000+')]
+ sm={}
+ for z in q("select t.market,t.token_id,s.settlement_price,s.settled_at from paper_trades t join settlements s on s.trade_id=t.id order by s.settled_at"): sm[(z['market'],z['token_id'])]=(float(z['settlement_price']),z['settled_at'])
  out=[]
  for lo,hi,label in buckets:
-  # Keep execution assumption fixed at <=1%; isolate size instead of tuning both dimensions.
   sql="select id,decided_at,leader,market,event,token_id,current_price,build_usdc from paper_builds where side='BUY' and build_usdc>=? and current_price>0 and slippage is not null and slippage<=.01"; a=[lo]
   if hi is not None: sql+=' and build_usdc<?'; a.append(hi)
   sql+=' order by decided_at,id'; first={}
   for x in q(sql,a): first.setdefault((x['leader'],x['market'],x['token_id']),x)
-  sm={}
-  for z in q("select t.market,t.token_id,s.settlement_price,s.settled_at from paper_trades t join settlements s on s.trade_id=t.id order by s.settled_at"): sm[(z['market'],z['token_id'])]=(float(z['settlement_price']),z['settled_at'])
-  vals=[]; events=set()
+  closed=[]
   for x in first.values():
    z=sm.get((x['market'],x['token_id']))
-   if z and z[1]>=x['decided_at']:
-    vals.append(50*(z[0]/float(x['current_price'])-1)); events.add(x['event'] or ('market:'+x['market']))
-  pnl=sum(vals); invested=len(vals)*50
-  out.append({'label':label,'positions':len(first),'settled':len(vals),'events':len(events),'pnl':round(pnl,2),'roi':round(100*pnl/invested,2) if invested else 0,'winrate':round(100*sum(v>0 for v in vals)/len(vals),1) if vals else 0})
+   if z and z[1]>=x['decided_at']: closed.append((x,50*(z[0]/float(x['current_price'])-1)))
+  closed.sort(key=lambda t:(t[0]['decided_at'],t[0]['id']))
+  def stats(rows):
+   vals=[v for _,v in rows]; pnl=sum(vals); inv=len(vals)*50
+   return {'n':len(vals),'pnl':round(pnl,2),'roi':round(100*pnl/inv,2) if inv else 0,'winrate':round(100*sum(v>0 for v in vals)/len(vals),1) if vals else 0}
+  mid=len(closed)//2; h1=stats(closed[:mid]); h2=stats(closed[mid:])
+  vals=[v for _,v in closed]; pnl=sum(vals); invested=len(vals)*50; events={x['event'] or ('market:'+x['market']) for x,_ in closed}
+  out.append({'label':label,'positions':len(first),'settled':len(vals),'events':len(events),'pnl':round(pnl,2),'roi':round(100*pnl/invested,2) if invested else 0,'winrate':round(100*sum(v>0 for v in vals)/len(vals),1) if vals else 0,'first_half':h1,'second_half':h2})
  return out
 
 def payload():
