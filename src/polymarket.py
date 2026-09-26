@@ -6,6 +6,10 @@ class PolymarketPublicClient:
     def __init__(self,timeout=10.0): self.client=httpx.Client(timeout=timeout,headers={"User-Agent":"polymarket-copy-engine/0.6.2"})
     def activity(self,wallet,limit=100):
         r=self.client.get(DATA_API+"/activity",params={"user":wallet,"type":"TRADE","limit":limit,"sortBy":"TIMESTAMP","sortDirection":"DESC"}); r.raise_for_status(); return r.json()
+    def trades(self,wallet,limit=100,offset=0):
+        # /trades preserves explicit BUY/SELL executions and is the canonical
+        # source for forward trade ingestion. Keep /activity for compatibility.
+        r=self.client.get(DATA_API+"/trades",params={"user":wallet,"limit":limit,"offset":offset}); r.raise_for_status(); return r.json()
     def order_book(self,token_id):
         r=self.client.get(CLOB_API+"/book",params={"token_id":token_id}); r.raise_for_status(); return r.json()
     def executable_price(self,token_id,side):

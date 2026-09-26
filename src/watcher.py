@@ -16,14 +16,14 @@ class WalletWatcher:
     def bootstrap(self):
         marked=0
         for leader in self.leaders:
-            for row in self.client.activity(leader.wallet,100):
+            for row in self.client.trades(leader.wallet,100):
                 fp=fingerprint(row)
                 if not self.store.seen(fp): self.store.mark_seen(fp,int(row.get("timestamp") or time.time())); marked+=1
         return marked
     def poll_once(self):
         handled=0
         for leader in self.leaders:
-            for row in reversed(self.client.activity(leader.wallet,100)):
+            for row in reversed(self.client.trades(leader.wallet,100)):
                 fp=fingerprint(row)
                 if self.store.seen(fp): continue
                 now=time.time(); ts=int(row.get("timestamp") or now); self.store.mark_seen(fp,ts); self._collect(leader,row,now,ts); handled+=1
