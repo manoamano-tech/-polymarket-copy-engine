@@ -9,7 +9,7 @@ def q(sql,args=()):
 def backtest(args):
  leader=args.get("leader") or None; min_build=max(0,float(args.get("min_build",500))); max_build=float(args.get("max_build",0) or 0); min_fills=max(1,int(args.get("min_fills",2))); max_fills=max(min_fills,int(args.get("max_fills") or 1000000000)); max_slippage=float(args.get("max_slippage",.01)); stake=max(.01,float(args.get("stake",50)))
  sql="""select id,decided_at,leader,market,event,token_id,outcome,fill_count,build_usdc,current_price,slippage from paper_builds where side='BUY' and build_usdc>=? and fill_count between ? and ? and current_price>0 and slippage is not null and slippage<=?"""; a=[min_build,min_fills,max_fills,max_slippage]
- if max_build>0: sql+=' and build_usdc<?'; a.append(max_build)
+ if max_build>0: sql+=' and build_usdc<=?'; a.append(max_build)
  if leader: sql+=' and leader=?'; a.append(leader)
  sql+=' order by decided_at,id'; eligible=q(sql,a); first={}
  for x in eligible: first.setdefault((x['leader'],x['market'],x['token_id']),x)
