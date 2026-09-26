@@ -4,6 +4,7 @@ from .models import LeaderFill
 from .aggregator import TimedFillAggregator
 from .sessions import SessionAggregator
 from .strategies import evaluate_matrix
+from .classification import classify_sport
 
 def fingerprint(row):
     raw="|".join(str(row.get(k,"")) for k in ("transactionHash","asset","side","price","size","timestamp"))
@@ -35,7 +36,8 @@ class WalletWatcher:
         fill=LeaderFill(leader.name,leader.wallet,str(row.get("conditionId") or ""),str(row.get("eventSlug") or ""),str(row.get("outcome") or ""),side,price,usdc,datetime.fromtimestamp(ts,tz=timezone.utc),token,str(row.get("transactionHash") or ""))
         self.aggregator.add(fill,now); closed=self.sessions.add(fill,now)
         if closed: self._store_session(closed,now)
-        latency=max(0,now-ts); fill_id=self.store.insert("raw_fills",{"observed_at":now,"trade_ts":ts,"latency_seconds":latency,"leader":leader.name,"wallet":leader.wallet,"transaction_hash":fill.transaction_hash,"market":fill.market,"event":fill.event,"outcome":fill.outcome,"side":side,"token_id":token,"leader_price":price,"leader_usdc":usdc})
+        sport,league=classify_sport(fill.event)
+        latency=max(0,now-ts); fill_id=self.store.insert("raw_fills",{"observed_at":now,"trade_ts":ts,"latency_seconds":latency,"leader":leader.name,"wallet":leader.wallet,"transaction_hash":fill.transaction_hash,"market":fill.market,"event":fill.event,"outcome":fill.outcome,"side":side,"token_id":token,"leader_price":price,"leader_usdc":usdc,"sport":sport,"league":league})
         if leader.name=="RN1":
             for delay in self.snapshot_delays: self.snapshot_queue.append((now+delay,fill_id,now,token,side,delay))
         print("[FILL] {} {} {} ${:.2f} @ {:.4f} api_latency={:.1f}s".format(leader.name,side,fill.outcome,usdc,price,latency),flush=True)

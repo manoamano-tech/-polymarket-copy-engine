@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 SCHEMA="""
 CREATE TABLE IF NOT EXISTS seen_activity (fingerprint TEXT PRIMARY KEY, seen_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS raw_fills (id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at REAL NOT NULL, trade_ts INTEGER NOT NULL, latency_seconds REAL NOT NULL, leader TEXT NOT NULL, wallet TEXT NOT NULL, transaction_hash TEXT, market TEXT NOT NULL, event TEXT, outcome TEXT, side TEXT NOT NULL, token_id TEXT NOT NULL, leader_price REAL NOT NULL, leader_usdc REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS raw_fills (id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at REAL NOT NULL, trade_ts INTEGER NOT NULL, latency_seconds REAL NOT NULL, leader TEXT NOT NULL, wallet TEXT NOT NULL, transaction_hash TEXT, market TEXT NOT NULL, event TEXT, outcome TEXT, side TEXT NOT NULL, token_id TEXT NOT NULL, leader_price REAL NOT NULL, leader_usdc REAL NOT NULL, sport TEXT, league TEXT);
 CREATE TABLE IF NOT EXISTS fill_price_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, fill_id INTEGER NOT NULL, target_delay_seconds REAL NOT NULL, sampled_at REAL NOT NULL, actual_delay_seconds REAL NOT NULL, executable_price REAL, FOREIGN KEY(fill_id) REFERENCES raw_fills(id), UNIQUE(fill_id,target_delay_seconds));
 CREATE TABLE IF NOT EXISTS paper_builds (id INTEGER PRIMARY KEY AUTOINCREMENT, decided_at REAL NOT NULL, leader TEXT NOT NULL, wallet TEXT NOT NULL, market TEXT NOT NULL, event TEXT, outcome TEXT, side TEXT NOT NULL, token_id TEXT NOT NULL, fill_count INTEGER NOT NULL, build_usdc REAL NOT NULL, leader_vwap REAL NOT NULL, build_duration_seconds REAL NOT NULL, avg_latency_seconds REAL NOT NULL, current_price REAL, slippage REAL, action TEXT NOT NULL, reason TEXT NOT NULL, simulated_size REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS strategy_decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, build_id INTEGER NOT NULL, strategy TEXT NOT NULL, min_build_usd REAL NOT NULL, max_slippage REAL NOT NULL, action TEXT NOT NULL, reason TEXT NOT NULL, simulated_size REAL NOT NULL, FOREIGN KEY(build_id) REFERENCES paper_builds(id));
@@ -17,7 +17,11 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_fill ON fill_price_snapshots(fill_id); C
 class Store:
     def __init__(self,path="data/paper.db"):
         Path(path).parent.mkdir(parents=True,exist_ok=True); self.db=sqlite3.connect(path); self.db.executescript(SCHEMA); self._migrate(); self.db.commit()
+    def _ensure_column(self,table,column,decl):
+        cols={r[1] for r in self.db.execute("PRAGMA table_info("+table+")")}
+        if column not in cols: self.db.execute("ALTER TABLE "+table+" ADD COLUMN "+column+" "+decl)
     def _migrate(self):
+        self._ensure_column("raw_fills","sport","TEXT"); self._ensure_column("raw_fills","league","TEXT")
         name="reset_legacy_settlements_v061"
         if not self.db.execute("SELECT 1 FROM schema_migrations WHERE name=?",(name,)).fetchone():
             old=self.db.execute("SELECT COUNT(*) FROM settlements").fetchone()[0]; self.db.execute("DELETE FROM settlements"); self.db.execute("DELETE FROM settlement_audit"); self.db.execute("INSERT INTO schema_migrations(name,applied_at) VALUES(?,strftime('%s','now'))",(name,)); print("[MIGRATION] cleared {} legacy unverified settlements for safe recalculation".format(old),flush=True)

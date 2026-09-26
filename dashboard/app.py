@@ -164,13 +164,13 @@ def fill_copy_dashboard():
  for z in q("select t.market,t.token_id,s.settlement_price,s.settled_at from paper_trades t join settlements s on s.trade_id=t.id order by s.settled_at"): sm[(z['market'],z['token_id'])]=(float(z['settlement_price']),z['settled_at'])
  snaps={x['fill_id']:float(x['executable_price']) for x in q("select fill_id,executable_price from fill_price_snapshots where target_delay_seconds=0 and executable_price is not null")}
  questions={(x['condition_id'].lower(),x['token_id']):x['question'] for x in q("select condition_id,token_id,max(question) question from settlement_audit group by condition_id,token_id")}
- rows=q("select id,leader,observed_at,trade_ts,event,outcome,market,token_id,leader_price,leader_usdc from raw_fills where side='BUY' order by trade_ts,id")
+ rows=q("select id,leader,observed_at,trade_ts,event,outcome,market,token_id,leader_price,leader_usdc,sport,league from raw_fills where side='BUY' order by trade_ts,id")
  leaders={}
  for x in rows:
-  L=x['leader']; ld=leaders.setdefault(L,{'leader':L,'last_seen_ts':0,'fills':0,'settled_fills':0,'open_fills':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0,'sports':{},'equity':[],'running':0.0,'exec3':{'fills':0,'settled':0,'copied':0.0,'pnl':0.0}})
+  L=x['leader']; ld=leaders.setdefault(L,{'leader':L,'last_seen_ts':0,'market_keys':set(),'fills':0,'settled_fills':0,'open_fills':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0,'sports':{},'equity':[],'running':0.0,'exec3':{'fills':0,'settled':0,'copied':0.0,'pnl':0.0}})
   question=questions.get((x['market'].lower(),x['token_id']),'') if not x['event'] else ''
-  sport,league=classify_sport(x['event'],question); d=ld['sports'].setdefault((sport,league),{'sport':sport,'league':league,'fills':0,'closed':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0})
-  usd=float(x['leader_usdc']); lp=float(x['leader_price']); ld['last_seen_ts']=max(ld['last_seen_ts'],x['trade_ts']); ld['fills']+=1;ld['leader_volume']+=usd;d['fills']+=1;d['leader_volume']+=usd
+  sport=x['sport'] or classify_sport(x['event'],question)[0]; league=x['league'] or classify_sport(x['event'],question)[1]; d=ld['sports'].setdefault((sport,league),{'sport':sport,'league':league,'fills':0,'closed':0,'leader_volume':0.0,'copied':0.0,'pnl':0.0,'wins':0})
+  usd=float(x['leader_usdc']); lp=float(x['leader_price']); ld['last_seen_ts']=max(ld['last_seen_ts'],x['trade_ts']); ld['market_keys'].add(x['market']); ld['fills']+=1;ld['leader_volume']+=usd;d['fills']+=1;d['leader_volume']+=usd
   z=sm.get((x['market'],x['token_id']))
   if z and z[1]>=x['observed_at'] and lp>0:
    stake=.01*usd;pnl=stake*(z[0]/lp-1);ld['settled_fills']+=1;ld['copied']+=stake;ld['pnl']+=pnl;ld['wins']+=int(pnl>0);d['closed']+=1;d['copied']+=stake;d['pnl']+=pnl;d['wins']+=int(pnl>0);ld['running']+=pnl;ld['equity'].append({'ts':x['trade_ts'],'pnl':round(ld['running'],2),'trade_pnl':round(pnl,2),'event':x['event'],'sport':sport,'league':league})
@@ -199,6 +199,7 @@ def fill_copy_dashboard():
     lo=int(b*step); hi=min(len(eq),max(lo+1,int((b+1)*step)+1)); chunk=range(lo,hi)
     keep.add(lo);keep.add(min(chunk,key=lambda i:eq[i]['pnl']));keep.add(max(chunk,key=lambda i:eq[i]['pnl']))
    ld['equity']=[eq[i] for i in sorted(keep)]
+  ld['markets']=len(ld.pop('market_keys'))
  return {'leaders':sorted(leaders.values(),key=lambda x:-x['fills']),'scale_pct':1,'slippage_limit_pct':3}
 
 def observed_positions(leader=None,status='all',limit=500):
