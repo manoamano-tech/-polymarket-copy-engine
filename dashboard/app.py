@@ -228,11 +228,18 @@ def db_exec(sql,args=()):
  try:
   cur=c.execute(sql,args); c.commit(); return cur.lastrowid
  finally:c.close()
+def secret_box():
+ key=os.environ.get('COPYEDGE_CREDENTIALS_KEY','').encode()
+ if not key: raise RuntimeError('COPYEDGE_CREDENTIALS_KEY is not configured')
+ return Fernet(key)
+def same_origin(h):
+ o=(h.get('Origin') or '').rstrip('/')
+ return not o or o=='https://copyedge.tech'
 def auth_schema():
  c=sqlite3.connect(DB,timeout=5)
  try:
   c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT NOT NULL,created_at REAL NOT NULL)")
-  c.execute("CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at REAL NOT NULL,expires_at REAL NOT NULL)");c.execute("CREATE TABLE IF NOT EXISTS polymarket_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL UNIQUE,wallet_address TEXT NOT NULL,wallet_type TEXT NOT NULL DEFAULT 'DEPOSIT_WALLET',connection_status TEXT NOT NULL DEFAULT 'READ_ONLY',connected_at REAL NOT NULL,updated_at REAL NOT NULL)")
+  c.execute("CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at REAL NOT NULL,expires_at REAL NOT NULL)");c.execute("CREATE TABLE IF NOT EXISTS polymarket_relayer_credentials (user_id INTEGER PRIMARY KEY, signer_address TEXT NOT NULL, api_key_enc BLOB NOT NULL, key_hint TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)");c.execute("CREATE TABLE IF NOT EXISTS polymarket_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL UNIQUE,wallet_address TEXT NOT NULL,wallet_type TEXT NOT NULL DEFAULT 'DEPOSIT_WALLET',connection_status TEXT NOT NULL DEFAULT 'READ_ONLY',connected_at REAL NOT NULL,updated_at REAL NOT NULL)")
   cols={r[1] for r in c.execute('pragma table_info(copy_profiles)')}
   if 'user_id' not in cols:c.execute('alter table copy_profiles add column user_id INTEGER')
   c.commit()
@@ -269,7 +276,7 @@ def account_payload(uid):
  for z in settled:
   pnl=float(z['requested_usd'])*(float(z['settlement_price'])/float(z['executable_price'])-1);stats['settled']+=1;stats['invested']+=float(z['requested_usd']);stats['pnl']+=pnl
  stats['pnl']=round(stats['pnl'],2);stats['invested']=round(stats['invested'],2);stats['roi']=round(stats['pnl']/stats['invested']*100,2) if stats['invested'] else None
- pm=q("select wallet_address,wallet_type,connection_status,connected_at from polymarket_accounts where user_id=?",(uid,));return {'wallet_connected':bool(pm),'live_execution':bool(pm and pm[0]['connection_status']=='TRADING'),'polymarket_account':pm[0] if pm else None,'profiles':profiles,'attempts':attempts,'leaders':leaders,'sports':sports,'leagues':leagues,'stats':stats}
+ pm=q("select wallet_address,wallet_type,connection_status,connected_at from polymarket_accounts where user_id=?",(uid,));rel=q("select signer_address,key_hint,created_at,updated_at from polymarket_relayer_credentials where user_id=?",(uid,));return {'wallet_connected':bool(pm),'live_execution':bool(pm and pm[0]['connection_status']=='TRADING'),'polymarket_account':pm[0] if pm else None,'relayer':rel[0] if rel else None,'profiles':profiles,'attempts':attempts,'leaders':leaders,'sports':sports,'leagues':leagues,'stats':stats}
 auth_schema()
 
 class H(BaseHTTPRequestHandler):
@@ -302,6 +309,19 @@ class H(BaseHTTPRequestHandler):
     if old:db_exec("update polymarket_accounts set wallet_address=?,wallet_type='DEPOSIT_WALLET',connection_status='READ_ONLY',updated_at=? where user_id=?",(wallet,now,u['id']))
     else:db_exec("insert into polymarket_accounts(user_id,wallet_address,wallet_type,connection_status,connected_at,updated_at) values(?,?,'DEPOSIT_WALLET','READ_ONLY',?,?)",(u['id'],wallet,now,now))
     return self.send_json(200,{'ok':True,'wallet_address':wallet,'wallet_type':'DEPOSIT_WALLET','connection_status':'READ_ONLY'})
+   elif self.path=='/api/polymarket/relayer':
+    u=current_user(self.headers.get('Cookie'))
+    if not u:return self.send_json(401,{'error':'unauthorized'})
+    if not same_origin(self.headers):return self.send_json(403,{'error':'origin_not_allowed'})
+    if not q('select 1 from polymarket_accounts where user_id=?',(u['id'],)):return self.send_json(409,{'error':'Сначала привяжите Polymarket account wallet'})
+    signer=(d.get('signer_address') or '').strip().lower();api_key=(d.get('api_key') or '').strip()
+    if not re.fullmatch(r'0x[a-f0-9]{40}',signer):return self.send_json(400,{'error':'Некорректный Signer Address'})
+    if len(api_key)<8 or len(api_key)>512:return self.send_json(400,{'error':'Некорректный Relayer API Key'})
+    enc=secret_box().encrypt(api_key.encode());hint='••••'+api_key[-4:];now=time.time();old=q('select 1 from polymarket_relayer_credentials where user_id=?',(u['id'],))
+    if old:db_exec('update polymarket_relayer_credentials set signer_address=?,api_key_enc=?,key_hint=?,updated_at=? where user_id=?',(signer,enc,hint,now,u['id']))
+    else:db_exec('insert into polymarket_relayer_credentials(user_id,signer_address,api_key_enc,key_hint,created_at,updated_at) values(?,?,?,?,?,?)',(u['id'],signer,enc,hint,now,now))
+    db_exec("update polymarket_accounts set connection_status='RELAYER_SAVED',updated_at=? where user_id=?",(now,u['id']))
+    return self.send_json(200,{'ok':True,'signer_address':signer,'key_hint':hint,'status':'RELAYER_SAVED'})
    elif self.path=='/api/polymarket/disconnect':
     u=current_user(self.headers.get('Cookie'))
     if not u:return self.send_json(401,{'error':'unauthorized'})
